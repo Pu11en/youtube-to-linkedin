@@ -1,0 +1,21 @@
+Most people spend hours on repetitive tasks that AI could handle in seconds.
+
+Here's the truth: You don't need to be a developer to automate your work.
+
+I just discovered how simple it is to build a 3-step automation using Zapier and ChatGPT that runs 24/7 — no coding required.
+
+Here's the basic framework:
+
+• Choose a TRIGGER (the event that starts your automation — like dropping a file into a folder)
+• Add an ACTION using ChatGPT (have it generate content, analyze data, write copy, etc.)
+• Save the OUTPUT automatically (to Dropbox, Google Drive, email, or 5,000+ other apps)
+
+The example that opened my eyes: I drop an email draft into a folder, and within 2 minutes, AI generates 5 subject line options and saves them to a new file.
+
+One-time setup. Works forever.
+
+The real power? Once you understand triggers and actions, you can build hundreds of different automations using the same logic.
+
+This changes everything we've learned about AI — because now it works for you even when you're not at your desk.
+
+What repetitive task would you automate first if you had a system like this running 24/7?

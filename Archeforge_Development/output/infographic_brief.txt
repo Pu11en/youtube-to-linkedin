@@ -1,0 +1,130 @@
+INFOGRAPHIC CREATIVE BRIEF
+
+PROJECT TITLE: Automating Tasks with AI: Generate Email Subject Lines Using Zapier, Dropbox, and ChatGPT
+
+PLATFORM: LinkedIn Infographic
+
+ASPECT RATIO: 16:9 (Horizontal)
+
+GOAL: To clearly demonstrate how to set up an AI-powered email subject line generation workflow using no-code tools Zapier, Dropbox, and ChatGPT, empowering professionals to automate repetitive tasks and boost productivity.
+
+TARGET AUDIENCE: Business owners, marketers, content creators, productivity enthusiasts, and anyone looking to leverage AI for automation without coding.
+
+CORE MESSAGE: Automate your content creation workflow effortlessly with AI and no-code tools. Set up smart automations once, and let them run continuously, freeing up your time for more strategic work.
+
+TONE: Informative, empowering, efficient, modern, accessible.
+
+VISUAL STYLE: Clean, professional, modern. Incorporate brand colors of Zapier (purple/blue), Dropbox (blue), and OpenAI (gradient blue/green) for highlights. Use a clear visual hierarchy with distinct sections for readability.
+
+--------------------------------------------------------------------------------
+
+INFOGRAPHIC CONTENT
+
+1.  HEADLINE
+    Automating Tasks with AI: Generate Email Subject Lines Using Zapier, Dropbox, and ChatGPT
+
+2.  INTRODUCTION / OVERVIEW SECTION
+
+    Section Title: Unlock AI Automation: Boost Productivity No-Code!
+
+    Text: Tired of manual tasks? Discover how to automate content generation using AI with Zapier, Dropbox, and ChatGPT. No coding needed – just smart, efficient workflows!
+
+    Key Takeaways:
+    *   Automate any task with Zapier's "Zaps" (Triggers + Actions).
+    *   Integrate AI (ChatGPT) to generate dynamic content from your data.
+    *   Set up once, run 24/7: Your AI assistant never sleeps!
+    *   Customize automations with thousands of apps and endless possibilities.
+
+3.  STEP-BY-STEP WORKFLOW: BUILD YOUR AI SUBJECT LINE GENERATOR
+
+    (Each step will be a distinct, numbered section with concise text.)
+
+    STEP 1: GET STARTED WITH ZAPIER
+    *   Text: Sign up or log in to Zapier.com. Create a new "Zap" – this is your automation workflow.
+    *   Tool Callout: Zapier (logo)
+
+    STEP 2: SET YOUR TRIGGER (INPUT)
+    *   Text: Tell Zapier when to start your automation.
+    *   a. App: Select Dropbox.
+    *   b. Event: Choose "New File in Folder."
+    *   c. Connect: Link your Dropbox account & pick your input folder (e.g., "Drop Zone Emails").
+    *   d. Test: Place a sample text file in the folder to confirm detection.
+    *   Tool Callout: Dropbox (logo)
+
+    STEP 3: ADD AI ACTION (PROCESSING)
+    *   Text: Let AI process your input and generate content.
+    *   a. App: Select ChatGPT (or OpenAI).
+    *   b. Event: Choose "Conversation."
+    *   c. Connect: Link your OpenAI account & select model (e.g., "gpt-4").
+    *   d. Prompt: Craft your prompt (e.g., "Generate five email subject lines for this email:").
+    *   e. Input: Pass "File Text" from your Dropbox trigger into the prompt.
+    *   f. Test: Verify ChatGPT generates relevant subject lines.
+    *   Tool Callout: ChatGPT / OpenAI (logo)
+
+    STEP 4: SAVE YOUR RESULTS (OUTPUT)
+    *   Text: Store the AI-generated content in your preferred location.
+    *   a. App: Select Dropbox.
+    *   b. Event: Choose "Create Text File."
+    *   c. Connect: Link Dropbox & choose your output folder (e.g., "Subject Lines").
+    *   d. File Name: Define using original file name + "_AutoSubject.txt" for clarity.
+    *   e. File Content: Use the "Assistant Response Message" from the ChatGPT step.
+    *   f. Test: Confirm a new file appears in your output folder with the subject lines.
+    *   Tool Callout: Dropbox (logo)
+
+    STEP 5: ACTIVATE & TEST
+    *   Text: Publish your Zap to activate the automation. Drop a new email into your input folder and watch the subject lines appear automatically in your output folder. Your AI assistant is now live 24/7!
+
+4.  TOOL & SERVICE CALLOUTS (Bottom of infographic or as a sidebar)
+    *   Zapier: Connect & Automate
+    *   Dropbox: Cloud Storage
+    *   ChatGPT / OpenAI: AI Content Generation
+
+--------------------------------------------------------------------------------
+
+LAYOUT SUGGESTIONS
+
+1.  OVERALL FLOW:
+    *   Horizontal 16:9 layout.
+    *   Headline spans the top.
+    *   Introduction/Key Takeaways section below the headline, potentially as a left-aligned column or a narrow horizontal band.
+    *   Main step-by-step workflow dominates the central and right areas, designed with a clear visual progression (e.g., left-to-right or a gentle S-curve/zigzag across the infographic).
+    *   Tool callouts and a simple call to action at the bottom.
+
+2.  HEADER AREA:
+    *   Headline: Large, bold font, centered at the very top.
+    *   Sub-headline/Intro: Below the main headline, slightly smaller font, concise.
+    *   Small, subtle icons of Zapier, Dropbox, ChatGPT could be integrated next to the headline or in the intro section.
+
+3.  OVERVIEW / KEY TAKEAWAYS SECTION:
+    *   Clear section title.
+    *   Each key takeaway bullet point accompanied by a small, relevant icon (e.g., gears for automation, brain for AI, clock for 24/7, puzzle piece for integration). This section should be visually distinct but not overly complex.
+
+4.  STEP-BY-STEP WORKFLOW SECTION:
+    *   Each of the 5 main steps should be contained within a distinct visual block (e.g., a card, a numbered circle/rectangle).
+    *   Use large, prominent numbers for each step (1, 2, 3, 4, 5).
+    *   Each step block should include:
+        *   A concise step title.
+        *   1-2 short sentences or bullet points for the instructions.
+        *   Relevant app logos (Zapier, Dropbox, ChatGPT) within the step block to show which tool is active.
+        *   Clear flow arrows connecting the steps to indicate the automation path.
+    *   Consider representing Zapier as a central hub, with arrows flowing from Dropbox (Trigger) through Zapier to ChatGPT (Action 1) and then back through Zapier to Dropbox (Action 2).
+
+5.  VISUAL ELEMENTS & ICONS:
+    *   Primary Icons: Official Zapier logo, Dropbox folder icon, ChatGPT/OpenAI logo (or a generic AI brain/robot icon).
+    *   General Icons: Gears (automation), cloud (storage), arrows (flow/direction), checkmark (test/success), lightbulb (idea/AI), clock (24/7).
+    *   Color Palette: Utilize brand colors of Zapier (purple/blue), Dropbox (blue), and ChatGPT (gradient blue/green) for highlights, borders, or icon coloring. Use a clean white or light grey background for optimal text readability.
+    *   Typography: Clear hierarchy with distinct font sizes for headline, section titles, step titles, and body text. Use bolding to emphasize keywords.
+
+6.  FOOTER / CALL TO ACTION:
+    *   A simple, bold statement: "Start Automating Today!"
+    *   Small section with the main tool logos (Zapier, Dropbox, ChatGPT) as a reminder of the core technologies.
+
+--------------------------------------------------------------------------------
+
+TEXT LENGTH GUIDELINES:
+*   Headline: Max 1 line.
+*   Intro: Max 2-3 short sentences.
+*   Key Takeaways: 1 short sentence per point.
+*   Step Titles: 1 short, impactful phrase.
+*   Step Sub-points: 1-2 very short sentences or brief bullet points.
+*   Tool Callouts: 1 short descriptive phrase.
