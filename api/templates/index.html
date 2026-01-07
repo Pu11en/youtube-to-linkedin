@@ -111,10 +111,31 @@
 
         <!-- QUICK ADD TAB -->
         <div id="sectionSingle" class="card v-hidden">
-            <h2>Add Single URL</h2>
+            <h2>Quick Add</h2>
             <input type="text" id="singleUrl" placeholder="https://youtube.com/watch?v=...">
-            <button onclick="addToQueue()">Add to Bottom</button>
+            
+            <div style="margin: 15px 0;">
+                <label style="display: block; margin-bottom: 5px; font-weight: bold;">Mode:</label>
+                <div style="display: flex; gap: 20px;">
+                    <label style="cursor: pointer; font-size: 0.9rem;">
+                        <input type="radio" name="mode" value="autopilot" checked onchange="updateQuickBtn()"> Autopilot (Queue)
+                    </label>
+                    <label style="cursor: pointer; font-size: 0.9rem;">
+                        <input type="radio" name="mode" value="preview" onchange="updateQuickBtn()"> Preview & Approve
+                    </label>
+                </div>
+            </div>
+
+            <button id="btnQuickSubmit" onclick="handleQuickSubmit()">Add to Queue</button>
             <div id="singleStatus" class="status"></div>
+
+            <!-- PREVIEW AREA -->
+            <div id="previewArea" class="v-hidden" style="margin-top: 20px; border-top: 2px solid #eee; padding-top: 15px;">
+                <h3 style="font-size: 1rem; margin-top: 0;">Preview Generation</h3>
+                <img id="previewImage" src="" style="width: 100%; border-radius: 8px; margin-bottom: 10px; border: 1px solid #ddd;">
+                <textarea id="previewText" style="height: 150px; font-size: 13px;" placeholder="Generated LinkedIn post..."></textarea>
+                <button id="btnApprove" onclick="approveAndPost()">Approve & Post Now</button>
+            </div>
         </div>
 
         <!-- HISTORY -->
@@ -137,6 +158,10 @@
             const data = await res.json();
             document.getElementById('queueText').value = (data.urls || []).join('\n');
             
+            if (!data.redis_active) {
+                document.getElementById('queueStatus').innerHTML = '<span style="color: red;">⚠️ Redis not connected. Queue will not persist!</span>';
+            }
+
             const history = data.history || [];
             document.getElementById('historyList').innerHTML = history.length ? history.map(h => `
                 <div class="history-item">
@@ -161,36 +186,127 @@
             loadQueue();
         }
 
-        async function addToQueue() {
-            const url = document.getElementById('singleUrl').value;
-            if(!url) return;
-            const status = document.getElementById('singleStatus');
-            status.innerText = 'Adding...';
+        function updateQuickBtn() {
+            const mode = document.querySelector('input[name="mode"]:checked').value;
+            const btn = document.getElementById('btnQuickSubmit');
+            const previewArea = document.getElementById('previewArea');
             
-            await fetch('/api/add', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({url})
-            });
-            status.innerText = 'Added! Switch to Queue tab to see.';
-            document.getElementById('singleUrl').value = '';
-            loadQueue();
+            if (mode === 'autopilot') {
+                btn.innerText = 'Add to Queue';
+                previewArea.classList.add('v-hidden');
+            } else {
+                btn.innerText = 'Generate Preview';
+            }
+        }
+
+        async function handleQuickSubmit() {
+            const url = document.getElementById('singleUrl').value;
+            if(!url) return alert('Please paste a YouTube URL');
+            
+            const mode = document.querySelector('input[name="mode"]:checked').value;
+            const status = document.getElementById('singleStatus');
+            const previewArea = document.getElementById('previewArea');
+            
+            status.style.color = '#666';
+
+            if (mode === 'autopilot') {
+                status.innerText = 'Adding to queue...';
+                try {
+                    const res = await fetch('/api/add', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({url})
+                    });
+                    if (!res.ok) throw new Error('Failed to add to queue');
+                    status.innerText = 'Added! Switch to Queue tab to see.';
+                    document.getElementById('singleUrl').value = '';
+                    loadQueue();
+                } catch (e) {
+                    status.innerText = 'Error: ' + e.message;
+                    status.style.color = 'red';
+                }
+            } else {
+                status.innerText = 'Generating preview (1-2 mins)...';
+                previewArea.classList.add('v-hidden');
+                
+                try {
+                    const res = await fetch('/api/generate', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({url})
+                    });
+                    const data = await res.json();
+                    
+                    if (data.status === 'success') {
+                        status.innerText = 'Generation complete! Review below:';
+                        document.getElementById('previewImage').src = data.result.url;
+                        document.getElementById('previewText').value = data.result.post;
+                        previewArea.classList.remove('v-hidden');
+                    } else {
+                        status.innerText = 'Error: ' + (data.message || 'Check backend logs');
+                        status.style.color = 'red';
+                    }
+                } catch (e) {
+                    status.innerText = 'Error: ' + e.message;
+                    status.style.color = 'red';
+                }
+            }
+        }
+
+        async function approveAndPost() {
+            const status = document.getElementById('singleStatus');
+            const btn = document.getElementById('btnApprove');
+            const post = document.getElementById('previewText').value;
+            const url = document.getElementById('previewImage').src;
+            
+            status.innerText = 'Posting to LinkedIn...';
+            btn.disabled = true;
+            
+            try {
+                const res = await fetch('/api/post_custom', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({post, url})
+                });
+                const data = await res.json();
+                
+                if (data.status === 'success') {
+                    status.innerText = 'Successfully posted to LinkedIn!';
+                    document.getElementById('previewArea').classList.add('v-hidden');
+                    document.getElementById('singleUrl').value = '';
+                } else {
+                    status.innerText = 'Error posting: ' + (data.message || 'Check logs');
+                    status.style.color = 'red';
+                    btn.disabled = false;
+                }
+            } catch (e) {
+                status.innerText = 'Error: ' + e.message;
+                status.style.color = 'red';
+                btn.disabled = false;
+            }
         }
 
         async function processNext() {
             const status = document.getElementById('queueStatus');
             status.innerText = 'Processing next video (can take 1-3 mins)...';
+            status.style.color = '#666';
             
-            const res = await fetch('/api/process_next', {method: 'POST'});
-            const data = await res.json();
-            
-            if(data.status === 'success') {
-                status.innerText = 'Success! Posted to LinkedIn.';
-                loadQueue();
-            } else if(data.status === 'empty') {
-                status.innerText = 'Queue is empty.';
-            } else {
-                status.innerText = 'Error: ' + (data.message || 'Check logs');
+            try {
+                const res = await fetch('/api/process_next', {method: 'POST'});
+                const data = await res.json();
+                
+                if(data.status === 'success') {
+                    status.innerHTML = `<b>Success!</b> Posted to LinkedIn.<br><a href="${data.result.url}" target="_blank">View Image</a>`;
+                    loadQueue();
+                } else if(data.status === 'empty') {
+                    status.innerText = 'Queue is empty.';
+                } else {
+                    status.innerText = 'Error: ' + (data.message || 'Check logs');
+                    status.style.color = 'red';
+                }
+            } catch (e) {
+                status.innerText = 'Error: ' + e.message;
+                status.style.color = 'red';
             }
         }
 

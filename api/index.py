@@ -199,14 +199,21 @@ class ContentPipeline:
         requests.post("https://backend.blotato.com/v2/posts", headers=headers, json=payload)
 
     def run_full(self) -> dict:
+        res = self.generate_content()
+        self.post_content(res['post'], res['url'])
+        return res
+
+    def generate_content(self) -> dict:
         transcript = self.get_transcript()
         summary = self.ai_gemini(transcript)
         brief = self.ai_infographic_brief(summary)
         raw_img = self.kie_generate_image(brief)
         final_img = self.cloudinary_upload(raw_img)
         post_text = self.ai_claude_post(transcript)
-        self.blotato_post(post_text, final_img)
         return {"url": final_img, "summary": summary, "post": post_text}
+
+    def post_content(self, text: str, image_url: str):
+        self.blotato_post(text, image_url)
 
 app = Flask(__name__, template_folder='templates', static_folder='static')
 
@@ -222,7 +229,11 @@ def handle_queue():
         urls = request.json.get('urls', [])
         q.set_urls(urls)
         return jsonify({"status": "saved"})
-    return jsonify({"urls": q.get_urls(), "history": q.get_history()})
+    return jsonify({
+        "urls": q.get_urls(), 
+        "history": q.get_history(),
+        "redis_active": q.redis is not None
+    })
 
 @app.route('/api/add', methods=['POST'])
 def add_to_queue():
@@ -231,6 +242,35 @@ def add_to_queue():
     q = SimpleQueue(Config())
     q.add_url(url)
     return jsonify({"status": "added"})
+
+@app.route('/api/generate', methods=['POST'])
+def generate_only():
+    url = request.json.get('url')
+    if not url: return jsonify({"error": "no url"}), 400
+    cfg = Config()
+    try:
+        pipeline = ContentPipeline(cfg, url)
+        result = pipeline.generate_content()
+        return jsonify({"status": "success", "result": result})
+    except Exception as e:
+        logger.error(f"Generation failed: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/api/post_custom', methods=['POST'])
+def post_custom():
+    data = request.json
+    text = data.get('post')
+    image_url = data.get('url')
+    if not text or not image_url: return jsonify({"error": "missing data"}), 400
+    
+    cfg = Config()
+    try:
+        pipeline = ContentPipeline(cfg, "")
+        pipeline.post_content(text, image_url)
+        return jsonify({"status": "success"})
+    except Exception as e:
+        logger.error(f"Post failed: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route('/api/process_next', methods=['POST'])
 def process_next():
