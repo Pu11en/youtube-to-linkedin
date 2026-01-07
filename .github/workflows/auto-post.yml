@@ -1,0 +1,32 @@
+name: Auto Post to LinkedIn
+
+on:
+  schedule:
+    # Run every 3 hours (at minute 0 of hours 0, 3, 6, 9, 12, 15, 18, 21)
+    - cron: '0 */3 * * *'
+  workflow_dispatch:
+    # Allow manual trigger from GitHub Actions UI
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Vercel auto_process endpoint
+        run: |
+          echo "Triggering auto_process at $(date)"
+          response=$(curl -s -w "\n%{http_code}" -X POST "${{ secrets.VERCEL_URL }}/api/auto_process" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            -H "Content-Type: application/json")
+
+          http_code=$(echo "$response" | tail -n1)
+          body=$(echo "$response" | sed '$d')
+
+          echo "Response code: $http_code"
+          echo "Response body: $body"
+
+          if [ "$http_code" -ge 200 ] && [ "$http_code" -lt 300 ]; then
+            echo "Success!"
+          else
+            echo "Request failed with status $http_code"
+            exit 1
+          fi
