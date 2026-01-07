@@ -704,7 +704,7 @@ def get_next_youtube_url_from_sheets() -> Optional[Dict[str, Any]]:
 
     Expected sheet format:
         Column A: URL
-        Column B: Status (pending/done)
+        Column B: Status (Create/In Progress/Done)
         Column C: Processed At (timestamp)
 
     Returns:
@@ -720,7 +720,7 @@ def get_next_youtube_url_from_sheets() -> Optional[Dict[str, Any]]:
     records = sheet.get_all_records()
     for i, row in enumerate(records):
         status = str(row.get("Status", "")).lower().strip()
-        if status == "pending":
+        if status == "create":
             return {
                 "url": row.get("URL", ""),
                 "row_number": i + 2  # +2 for header row and 0-index
@@ -728,8 +728,19 @@ def get_next_youtube_url_from_sheets() -> Optional[Dict[str, Any]]:
     return None
 
 
+def mark_url_as_in_progress(row_number: int) -> None:
+    """Mark a URL as In Progress in Google Sheets."""
+    sheet_id = os.getenv("GOOGLE_SHEET_ID", "")
+    if not sheet_id:
+        raise RuntimeError("GOOGLE_SHEET_ID environment variable not set")
+
+    client = get_sheets_client()
+    sheet = client.open_by_key(sheet_id).sheet1
+    sheet.update_cell(row_number, 2, "In Progress")
+
+
 def mark_url_as_done_in_sheets(row_number: int) -> None:
-    """Mark a URL as done in Google Sheets."""
+    """Mark a URL as Done in Google Sheets with timestamp."""
     sheet_id = os.getenv("GOOGLE_SHEET_ID", "")
     if not sheet_id:
         raise RuntimeError("GOOGLE_SHEET_ID environment variable not set")
@@ -737,8 +748,8 @@ def mark_url_as_done_in_sheets(row_number: int) -> None:
     client = get_sheets_client()
     sheet = client.open_by_key(sheet_id).sheet1
 
-    # Update Status column (B) and Processed At column (C)
-    sheet.update_cell(row_number, 2, "done")
+    # Update Status column (B) to Done and Processed At column (C) with timestamp
+    sheet.update_cell(row_number, 2, "Done")
     sheet.update_cell(row_number, 3, datetime.utcnow().isoformat() + "Z")
 
 
@@ -760,14 +771,17 @@ def get_queue():
         sheet = client.open_by_key(sheet_id).sheet1
         records = sheet.get_all_records()
 
-        pending = [r for r in records if str(r.get("Status", "")).lower().strip() == "pending"]
+        create = [r for r in records if str(r.get("Status", "")).lower().strip() == "create"]
+        in_progress = [r for r in records if str(r.get("Status", "")).lower().strip() == "in progress"]
         done = [r for r in records if str(r.get("Status", "")).lower().strip() == "done"]
 
         return jsonify({
             'status': 'success',
-            'pending_count': len(pending),
+            'pending_count': len(create),
+            'in_progress_count': len(in_progress),
             'done_count': len(done),
-            'pending_urls': [r.get("URL") for r in pending],
+            'pending_urls': [r.get("URL") for r in create],
+            'in_progress_urls': [r.get("URL") for r in in_progress],
             'done_urls': [{'url': r.get("URL"), 'processed_at': r.get("Processed At", "")} for r in done],
             'total': len(records)
         })
@@ -791,7 +805,7 @@ def add_to_queue():
 
         client = get_sheets_client()
         sheet = client.open_by_key(sheet_id).sheet1
-        sheet.append_row([url, 'pending', ''])
+        sheet.append_row([url, 'Create', ''])
 
         return jsonify({'status': 'success', 'message': 'URL added to queue'})
     except Exception as e:
@@ -805,16 +819,20 @@ def process_next_in_queue():
     try:
         next_item = get_next_youtube_url_from_sheets()
         if not next_item:
-            return jsonify({'status': 'empty', 'message': 'No pending URLs in queue'})
+            return jsonify({'status': 'empty', 'message': 'No URLs with Create status in queue'})
 
         youtube_url = next_item['url']
         row_number = next_item['row_number']
         logger.info(f"Processing URL: {youtube_url} (row {row_number})")
 
+        # Mark as In Progress before starting
+        mark_url_as_in_progress(row_number)
+
         config = Config.from_env(youtube_url=youtube_url)
         pipeline = ContentPipeline(config)
         result = pipeline.run()
 
+        # Mark as Done with timestamp
         mark_url_as_done_in_sheets(row_number)
 
         return jsonify({

@@ -27,23 +27,31 @@
 
         <!-- Stats -->
         <div class="row mb-4">
-            <div class="col-md-4">
+            <div class="col-md-3">
                 <div class="card stats-card">
                     <div class="card-body">
                         <div class="stats-number text-warning" id="pendingCount">-</div>
-                        <div class="text-muted">Pending</div>
+                        <div class="text-muted">Create</div>
                     </div>
                 </div>
             </div>
-            <div class="col-md-4">
+            <div class="col-md-3">
+                <div class="card stats-card">
+                    <div class="card-body">
+                        <div class="stats-number text-info" id="inProgressCount">-</div>
+                        <div class="text-muted">In Progress</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
                 <div class="card stats-card">
                     <div class="card-body">
                         <div class="stats-number text-success" id="doneCount">-</div>
-                        <div class="text-muted">Completed</div>
+                        <div class="text-muted">Done</div>
                     </div>
                 </div>
             </div>
-            <div class="col-md-4">
+            <div class="col-md-3">
                 <div class="card stats-card">
                     <div class="card-body">
                         <div class="stats-number text-primary" id="totalCount">-</div>
@@ -85,9 +93,19 @@
         <!-- Pending URLs -->
         <div class="card">
             <div class="card-header bg-warning">
-                <h5 class="mb-0">⏳ Pending URLs</h5>
+                <h5 class="mb-0">📝 Create (Ready to Process)</h5>
             </div>
             <div class="card-body" id="pendingList">
+                <div class="text-muted">Loading...</div>
+            </div>
+        </div>
+
+        <!-- In Progress URLs -->
+        <div class="card">
+            <div class="card-header bg-info text-white">
+                <h5 class="mb-0">🔄 In Progress</h5>
+            </div>
+            <div class="card-body" id="inProgressList">
                 <div class="text-muted">Loading...</div>
             </div>
         </div>
@@ -123,16 +141,26 @@
                 }
 
                 document.getElementById('pendingCount').textContent = data.pending_count;
+                document.getElementById('inProgressCount').textContent = data.in_progress_count || 0;
                 document.getElementById('doneCount').textContent = data.done_count;
                 document.getElementById('totalCount').textContent = data.total;
 
-                // Pending list
+                // Pending (Create) list
                 if (data.pending_urls && data.pending_urls.length > 0) {
                     document.getElementById('pendingList').innerHTML = data.pending_urls.map(url => 
                         `<div class="url-item">🔗 ${url}</div>`
                     ).join('');
                 } else {
-                    document.getElementById('pendingList').innerHTML = '<div class="text-muted">No pending URLs</div>';
+                    document.getElementById('pendingList').innerHTML = '<div class="text-muted">No URLs ready to process</div>';
+                }
+
+                // In Progress list
+                if (data.in_progress_urls && data.in_progress_urls.length > 0) {
+                    document.getElementById('inProgressList').innerHTML = data.in_progress_urls.map(url => 
+                        `<div class="url-item">🔗 ${url}</div>`
+                    ).join('');
+                } else {
+                    document.getElementById('inProgressList').innerHTML = '<div class="text-muted">Nothing in progress</div>';
                 }
 
                 // Done list
