@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 
 # Optional SDKs
 try:
-    import google.generativeai as genai
+    from google import genai
 except ImportError:
     genai = None
 
@@ -126,7 +126,9 @@ class ContentPipeline:
         self.cfg = config
         self.youtube_url = youtube_url
         if config.gemini_api_key and genai:
-            genai.configure(api_key=config.gemini_api_key)
+            self.gemini_client = genai.Client(api_key=config.gemini_api_key)
+        else:
+            self.gemini_client = None
 
     def extract_id(self, url: str) -> str:
         parsed = urlparse(url)
@@ -148,14 +150,22 @@ class ContentPipeline:
             raise RuntimeError(f"Could not get transcript. Check proxy or if video has CC. {e}")
 
     def ai_gemini(self, transcript: str) -> str:
-        model = genai.GenerativeModel(self.cfg.gemini_model)
+        if not self.gemini_client: raise RuntimeError("Gemini API key not configured")
         prompt = f"Summarize this YouTube transcript into a structured guide with Title, Key Points, and Workflow. Return plain text.\n\nTRANSCRIPT:\n{transcript}"
-        return model.generate_content(prompt).text
+        response = self.gemini_client.models.generate_content(
+            model=self.cfg.gemini_model,
+            contents=prompt
+        )
+        return response.text
 
     def ai_infographic_brief(self, summary: str) -> str:
-        model = genai.GenerativeModel(self.cfg.gemini_model)
+        if not self.gemini_client: raise RuntimeError("Gemini API key not configured")
         prompt = f"Create an infographic design brief for LinkedIn (16:9) from this summary. Focus on visual hierarchy. Plain text.\n\nSUMMARY:\n{summary}"
-        return model.generate_content(prompt).text
+        response = self.gemini_client.models.generate_content(
+            model=self.cfg.gemini_model,
+            contents=prompt
+        )
+        return response.text
 
     def kie_generate_image(self, brief: str) -> str:
         headers = {"Authorization": f"Bearer {self.cfg.kie_api_key}", "Content-Type": "application/json"}

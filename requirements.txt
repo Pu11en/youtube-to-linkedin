@@ -2,7 +2,7 @@ flask
 requests
 python-dotenv
 youtube-transcript-api>=1.2.3
-google-generativeai
+google-genai
 anthropic
 cloudinary
 upstash-redis
