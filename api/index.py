@@ -742,6 +742,12 @@ def mark_url_as_done_in_sheets(row_number: int) -> None:
     sheet.update_cell(row_number, 3, datetime.utcnow().isoformat() + "Z")
 
 
+@app.route('/queue', methods=['GET'])
+def queue_page():
+    """Queue management page."""
+    return render_template('queue.html')
+
+
 @app.route('/api/queue', methods=['GET'])
 def get_queue():
     """View current queue from Google Sheets."""
@@ -762,10 +768,65 @@ def get_queue():
             'pending_count': len(pending),
             'done_count': len(done),
             'pending_urls': [r.get("URL") for r in pending],
+            'done_urls': [{'url': r.get("URL"), 'processed_at': r.get("Processed At", "")} for r in done],
             'total': len(records)
         })
     except Exception as e:
         logger.error(f"Failed to get queue: {e}")
+        return jsonify({'status': 'failed', 'error': str(e)}), 500
+
+
+@app.route('/api/queue/add', methods=['POST'])
+def add_to_queue():
+    """Add a YouTube URL to the queue."""
+    try:
+        data = request.json
+        url = data.get('url', '').strip()
+        if not url:
+            return jsonify({'status': 'failed', 'error': 'URL is required'}), 400
+
+        sheet_id = os.getenv("GOOGLE_SHEET_ID", "")
+        if not sheet_id:
+            return jsonify({'status': 'failed', 'error': 'GOOGLE_SHEET_ID not configured'}), 400
+
+        client = get_sheets_client()
+        sheet = client.open_by_key(sheet_id).sheet1
+        sheet.append_row([url, 'pending', ''])
+
+        return jsonify({'status': 'success', 'message': 'URL added to queue'})
+    except Exception as e:
+        logger.error(f"Failed to add to queue: {e}")
+        return jsonify({'status': 'failed', 'error': str(e)}), 500
+
+
+@app.route('/api/queue/process_next', methods=['POST'])
+def process_next_in_queue():
+    """Manually trigger processing of the next pending URL."""
+    try:
+        next_item = get_next_youtube_url_from_sheets()
+        if not next_item:
+            return jsonify({'status': 'empty', 'message': 'No pending URLs in queue'})
+
+        youtube_url = next_item['url']
+        row_number = next_item['row_number']
+        logger.info(f"Processing URL: {youtube_url} (row {row_number})")
+
+        config = Config.from_env(youtube_url=youtube_url)
+        pipeline = ContentPipeline(config)
+        result = pipeline.run()
+
+        mark_url_as_done_in_sheets(row_number)
+
+        return jsonify({
+            'status': 'success',
+            'youtube_url': youtube_url,
+            'result': {
+                'cloudinary_url': result['outputs']['cloudinary_infographic_url'],
+                'linkedin_post': result['outputs']['linkedin_post'][:200] + '...',
+            }
+        })
+    except Exception as e:
+        logger.error(f"Process next failed: {e}", exc_info=True)
         return jsonify({'status': 'failed', 'error': str(e)}), 500
 
 
