@@ -60,12 +60,14 @@ class ClientManager:
     def update_settings(self, name: str, settings: dict):
         """Update specific settings for a client."""
         clients = self.get_all()
-        if name in clients:
-            clients[name].update(settings)
-            if self.redis:
-                self.redis.set(self.KEY, json.dumps(clients))
-            else:
-                self._local_clients = clients
+        if name not in clients:
+            # Create the client entry if it doesn't exist (e.g., 'default')
+            clients[name] = {}
+        clients[name].update(settings)
+        if self.redis:
+            self.redis.set(self.KEY, json.dumps(clients))
+        else:
+            self._local_clients = clients
     
     def get_client(self, name: str) -> Optional[dict]:
         """Get a single client's config."""
