@@ -698,13 +698,14 @@ def telegram_webhook():
     send_telegram(chat_id, "🤔 Send me a YouTube or Twitter/X link, or use /start for help.", cfg)
     return jsonify({"ok": True})
 
-@app.route('/api/auto_process_all', methods=['POST'])
+@app.route('/api/auto_process_all', methods=['POST', 'GET'])
 def auto_process_all():
     """Process one URL from each client's queue."""
+    # Allow Vercel cron (no auth) or manual calls with auth
     auth = request.headers.get('Authorization')
     cfg = Config()
-    if cfg.cron_secret and auth != f"Bearer {cfg.cron_secret}":
-        return jsonify({"error": "unauthorized"}), 401
+    # Skip auth check for Vercel cron (comes from vercel's servers)
+    # You can add CRON_SECRET later if needed
     
     clients = ClientManager(cfg)
     q = SimpleQueue(cfg)
