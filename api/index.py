@@ -133,11 +133,15 @@ class ContentPipeline:
             self.gemini_client = None
 
     def extract_id(self, url: str) -> str:
-        parsed = urlparse(url)
-        if "youtu.be" in parsed.netloc: return parsed.path.strip("/")
-        if "youtube.com" in parsed.netloc:
-            if "/watch" in parsed.path: return parse_qs(parsed.query).get("v", [""])[0]
-            if "/shorts/" in parsed.path: return parsed.path.split("/")[-1]
+        # Check if it's already an 11-char ID
+        if len(url) == 11 and re.match(r'^[a-zA-Z0-9_-]{11}$', url):
+            return url
+        
+        # Regex to find ID in various URL formats
+        match = re.search(r'(?:v=|\/|youtu\.be\/|embed\/|shorts\/)([0-9A-Za-z_-]{11})', url)
+        if match:
+            return match.group(1)
+            
         return url
 
     def get_transcript(self) -> str:
