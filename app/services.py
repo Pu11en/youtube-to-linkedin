@@ -27,10 +27,12 @@ from app.twitter_service import TwitterService
 logger = logging.getLogger(__name__)
 
 class ContentPipeline:
-    def __init__(self, config: Config, url: str = ""):
+    def __init__(self, config: Config, url: str = "", blotato_account_id: str = None):
         self.cfg = config
         self.url = url
         self.platform = detect_platform(url)
+        # Allow override for multi-client support
+        self.blotato_account_id = blotato_account_id or config.blotato_account_id
         
         # Initialize Gemini Client
         if config.gemini_api_key and genai:
@@ -269,10 +271,10 @@ class ContentPipeline:
         if not self.cfg.blotato_api_key or not self.cfg.blotato_api_key.strip():
             raise RuntimeError("BLOTATO_API_KEY is not configured")
         
-        if not self.cfg.blotato_account_id or not self.cfg.blotato_account_id.strip():
+        if not self.blotato_account_id or not self.blotato_account_id.strip():
             raise RuntimeError("BLOTATO_ACCOUNT_ID is not configured")
 
-        logger.info(f"Posting to LinkedIn via Blotato (account: {self.cfg.blotato_account_id[:8]}...)")
+        logger.info(f"Posting to LinkedIn via Blotato (account: {self.blotato_account_id[:8]}...)")
 
         headers = {
             "Content-Type": "application/json",
@@ -281,7 +283,7 @@ class ContentPipeline:
         
         payload = {
             "post": {
-                "accountId": self.cfg.blotato_account_id.strip(),
+                "accountId": self.blotato_account_id.strip(),
                 "content": {
                     "text": text,
                     "mediaUrls": [image_url] if image_url else [],

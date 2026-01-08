@@ -36,3 +36,7 @@ class Config:
     
     # Proxies
     proxy_url: Optional[str] = os.getenv("PROXY_URL")
+    
+    # Telegram Bot
+    telegram_bot_token: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
+    telegram_admin_chat_id: str = os.getenv("TELEGRAM_ADMIN_CHAT_ID", "")  # Your chat ID to restrict access
