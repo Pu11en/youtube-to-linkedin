@@ -10,5 +10,27 @@
             "src": "/(.*)",
             "dest": "api/index.py"
         }
+    ],
+    "crons": [
+        {
+            "path": "/api/auto_process_all",
+            "schedule": "0 14 * * *"
+        },
+        {
+            "path": "/api/auto_process_all",
+            "schedule": "0 16 * * *"
+        },
+        {
+            "path": "/api/auto_process_all",
+            "schedule": "0 18 * * *"
+        },
+        {
+            "path": "/api/auto_process_all",
+            "schedule": "0 20 * * *"
+        },
+        {
+            "path": "/api/auto_process_all",
+            "schedule": "0 22 * * *"
+        }
     ]
 }
