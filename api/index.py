@@ -31,6 +31,7 @@ except ImportError:
 
 from youtube_transcript_api import YouTubeTranscriptApi
 from youtube_transcript_api.proxies import GenericProxyConfig
+from youtube_transcript_api.formatters import TextFormatter
 
 # Configuration
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -141,11 +142,23 @@ class ContentPipeline:
 
     def get_transcript(self) -> str:
         vid = self.extract_id(self.youtube_url)
-        proxies = {"http": self.cfg.proxy_url, "https": self.cfg.proxy_url} if self.cfg.proxy_url else None
+        
+        # Configure proxy if available
+        proxy_config = None
+        if self.cfg.proxy_url:
+            proxy_config = GenericProxyConfig(
+                http_url=self.cfg.proxy_url,
+                https_url=self.cfg.proxy_url,
+            )
+        
         try:
-            loader = YouTubeTranscriptApi.list_transcripts(vid, proxies=proxies)
-            transcript = loader.find_transcript(['en']).fetch()
-            return " ".join([t['text'] for t in transcript])
+            # New API: Create instance with optional proxy config
+            ytt_api = YouTubeTranscriptApi(proxy_config=proxy_config)
+            # Fetch transcript, trying English first
+            transcript = ytt_api.fetch(vid, languages=['en'])
+            # Use TextFormatter to convert to plain text, or join manually
+            formatter = TextFormatter()
+            return formatter.format_transcript(transcript)
         except Exception as e:
             logger.error(f"Transcript failed: {e}")
             raise RuntimeError(f"Could not get transcript. Check proxy or if video has CC. {e}")
