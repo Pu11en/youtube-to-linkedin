@@ -30,8 +30,8 @@ class Config:
     
     # Models
     gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-1.5-pro")
-    # Updated to latest stable model version
-    claude_model: str = os.getenv("CLAUDE_MODEL", "claude-3-5-sonnet-latest")
+    # Claude 4.5 Sonnet - latest model as of Jan 2026
+    claude_model: str = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-5-20250929")
     
     # Proxies
     proxy_url: Optional[str] = os.getenv("PROXY_URL")
