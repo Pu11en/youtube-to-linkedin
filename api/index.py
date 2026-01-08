@@ -296,16 +296,19 @@ def telegram_webhook():
     if text.startswith('/style'):
         current = active_client.get(chat_id, 'default')
         parts = text.split()
-        styles = ["default", "thought_leader", "how_to", "curiosity", "story"]
+        styles = ["default", "soulprint", "thought_leader", "how_to", "curiosity", "story"]
         
         if len(parts) < 2:
             kb = {
                 "inline_keyboard": [[
-                    {"text": s.replace('_', ' ').title(), "callback_data": f"setstyle:{current}:{s}"} 
-                    for s in styles[:3]
+                    {"text": "🔮 SoulPrint", "callback_data": f"setstyle:{current}:soulprint"},
+                    {"text": "Default", "callback_data": f"setstyle:{current}:default"}
                 ], [
-                    {"text": s.replace('_', ' ').title(), "callback_data": f"setstyle:{current}:{s}"}
-                    for s in styles[3:]
+                    {"text": "Thought Leader", "callback_data": f"setstyle:{current}:thought_leader"},
+                    {"text": "How-To", "callback_data": f"setstyle:{current}:how_to"}
+                ], [
+                    {"text": "Curiosity", "callback_data": f"setstyle:{current}:curiosity"},
+                    {"text": "Story", "callback_data": f"setstyle:{current}:story"}
                 ]]
             }
             send_telegram(chat_id, f"🎨 <b>Choose post style for {current}:</b>", cfg, reply_markup=kb)
