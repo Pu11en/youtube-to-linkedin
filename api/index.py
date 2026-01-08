@@ -511,8 +511,13 @@ def telegram_webhook():
         send_telegram(chat_id, f"🗑 Cleared queue for <b>{current}</b>", cfg)
         return jsonify({"ok": True})
     
-    # Command: /test - Preview next URL without removing from queue
+    # Command: /test - DISABLED for now
     if text == '/test':
+        send_telegram(chat_id, "🚫 /test is disabled. Use /go instead.", cfg)
+        return jsonify({"ok": True})
+    
+    # OLD TEST CODE - DISABLED
+    if False and text == '/test_disabled':
         current = active_client.get(chat_id, 'drew')
         
         # Prevent duplicate test runs with a lock
