@@ -14,11 +14,11 @@
     "crons": [
         {
             "path": "/api/auto_process",
-            "schedule": "15 14 * * *"
+            "schedule": "20 14 * * *"
         },
         {
             "path": "/api/auto_process",
-            "schedule": "15 22 * * *"
+            "schedule": "20 22 * * *"
         }
     ]
 }
