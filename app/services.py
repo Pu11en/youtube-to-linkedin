@@ -2,6 +2,7 @@ import time
 import json
 import hashlib
 import logging
+import re
 import requests
 from typing import Optional, Dict, Any
 
@@ -63,6 +64,60 @@ class ContentPipeline:
         else:
             return self.get_transcript()
 
+    def _parse_caption_text(self, vtt_content: str) -> str:
+        """Extract plain text from VTT/SRT caption format."""
+        lines = vtt_content.split('\n')
+        text_lines = []
+        for line in lines:
+            line = line.strip()
+            # Skip timing lines, headers, and empty lines
+            if not line or '-->' in line or line.startswith('WEBVTT') or line.isdigit():
+                continue
+            # Remove VTT styling tags
+            line = re.sub(r'<[^>]+>', '', line)
+            if line:
+                text_lines.append(line)
+        return ' '.join(text_lines)
+
+    def _fetch_transcript_via_invidious(self, video_id: str) -> str:
+        """Fallback: fetch transcript via Invidious instances when YouTube blocks."""
+        instances = [
+            "https://inv.tux.pizza",
+            "https://invidious.projectsegfau.lt",
+            "https://vid.puffyan.us",
+            "https://invidious.fdn.fr",
+            "https://invidious.nerdvpn.de",
+        ]
+        
+        for instance in instances:
+            try:
+                # Get available captions
+                captions_url = f"{instance}/api/v1/captions/{video_id}"
+                resp = requests.get(captions_url, timeout=10)
+                if resp.status_code != 200:
+                    logger.warning(f"Invidious {instance} returned {resp.status_code}")
+                    continue
+                
+                data = resp.json()
+                captions = data.get("captions", [])
+                
+                # Find English track
+                for track in captions:
+                    lang = track.get("languageCode", "").lower()
+                    if lang.startswith("en"):
+                        track_url = f"{instance}{track.get('url', '')}"
+                        track_resp = requests.get(track_url, timeout=15)
+                        if track_resp.status_code == 200:
+                            transcript = self._parse_caption_text(track_resp.text)
+                            if transcript:
+                                logger.info(f"Successfully fetched transcript via {instance}")
+                                return transcript
+            except Exception as e:
+                logger.warning(f"Invidious {instance} failed: {e}")
+                continue
+        
+        raise RuntimeError("INVIDIOUS_FAILED: All Invidious instances failed to provide transcript")
+
     def get_transcript(self) -> str:
         """Fetches and formats transcript from YouTube."""
         video_id = extract_youtube_id(self.url)
@@ -84,7 +139,18 @@ class ContentPipeline:
             formatter = TextFormatter()
             return formatter.format_transcript(fetched_transcript)
         except Exception as e:
+            error_str = str(e).lower()
             logger.error(f"Transcript failed: {e}")
+            
+            # Check if this is an IP blocking issue
+            if "blocked" in error_str or "ipblocked" in error_str or "requestblocked" in error_str or "request_blocked" in error_str:
+                logger.info("YouTube blocked request, trying Invidious fallback...")
+                try:
+                    return self._fetch_transcript_via_invidious(video_id)
+                except Exception as fallback_error:
+                    logger.error(f"Invidious fallback also failed: {fallback_error}")
+                    raise RuntimeError(f"YOUTUBE_BLOCK: Both YouTube API and Invidious fallback failed. Original: {e}")
+            
             raise RuntimeError(f"Could not get transcript. Check proxy or if video has CC. Error: {e}")
 
     def generate_summary(self, content: str) -> str:
