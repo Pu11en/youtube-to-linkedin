@@ -27,12 +27,13 @@ from app.twitter_service import TwitterService
 logger = logging.getLogger(__name__)
 
 class ContentPipeline:
-    def __init__(self, config: Config, url: str = "", blotato_account_id: str = None):
+    def __init__(self, config: Config, url: str = "", blotato_account_id: str = None, style: str = "default"):
         self.cfg = config
         self.url = url
         self.platform = detect_platform(url)
         # Allow override for multi-client support
         self.blotato_account_id = blotato_account_id or config.blotato_account_id
+        self.style = style
         
         # Initialize Gemini Client
         if config.gemini_api_key and genai:
@@ -178,19 +179,27 @@ class ContentPipeline:
         raise TimeoutError("Kie image generation timed out")
 
     def generate_post_claude(self, content: str) -> str:
-        """Generates a LinkedIn post using Claude."""
+        """Generates a LinkedIn post using Claude with style support."""
         if not self.anthropic_client:
             raise RuntimeError("Anthropic API key not configured or SDK missing")
         
-        if self.platform == "twitter":
-            prompt = f"Write a high-converting LinkedIn post expanding on this tweet. Hook, bullets, CTA. Plain text.\n\nTWEET:\n{content}"
-        else:
-            prompt = f"Write a high-converting LinkedIn post from this transcript. Hook, bullets, CTA. Plain text.\n\nTRANSCRIPT:\n{content}"
+        style_prompts = {
+            "default": "Write a high-converting LinkedIn post. Include a strong hook, 3-5 value bullets, and a Call to Action.",
+            "thought_leader": "Write a personal, authoritative thought leadership post. Share a unique perspective or 'unpopular opinion' based on this content. Keep it professional but edgy.",
+            "how_to": "Write a clear, step-by-step 'how-to' guide for LinkedIn. Break down the process clearly using numbered lists.",
+            "curiosity": "Write a short, curiosity-driven post. Focus heavily on the hook (the 'scroll stopper') and leave the user wanting more. 2-3 short sentences total.",
+            "story": "Write a story-driven LinkedIn post. Start with a moment of conflict or realization and show the journey/lesson learned from this content."
+        }
+        
+        selected_prompt = style_prompts.get(self.style, style_prompts["default"])
+        source_label = "tweet" if self.platform == "twitter" else "transcript"
+        
+        prompt = f"{selected_prompt}\n\nCONTENT ({source_label}):\n{content}\n\nReturn ONLY the post text."
         
         try:
             msg = self.anthropic_client.messages.create(
                 model=self.cfg.claude_model,
-                max_tokens=1000,
+                max_tokens=1500,
                 messages=[{"role": "user", "content": prompt}]
             )
             # Handle text block response
@@ -198,6 +207,8 @@ class ContentPipeline:
                 return msg.content[0].text
             return str(msg.content)
         except Exception as e:
+            logger.error(f"Claude post generation failed: {e}")
+            raise RuntimeError(f"Claude generation failed: {e}")
             logger.error(f"Claude post generation failed: {e}")
             raise RuntimeError(f"Claude generation failed: {e}")
 
@@ -287,8 +298,11 @@ class ContentPipeline:
             logger.error(f"Blotato post failed: {e}")
             raise RuntimeError(f"Blotato post failed: {e}")
 
-    def run_all(self) -> Dict[str, Any]:
-        """Runs the full pipeline."""
+    def run_all(self, skip_post: bool = False) -> Dict[str, Any]:
+        """
+        Runs the full pipeline. 
+        If skip_post is True, it returns the generated data without posting to LinkedIn.
+        """
         content = self.get_content()
         summary = self.generate_summary(content)
         brief = self.generate_brief(summary)
@@ -302,12 +316,20 @@ class ContentPipeline:
             
         post_text = self.generate_post_claude(content)
         
-        if final_img:
-            self.post_blotato(post_text, final_img)
-            
-        return {
-            "url": final_img, 
+        result = {
+            "platform": self.platform,
+            "url": self.url,
+            "image_url": final_img, 
             "summary": summary, 
-            "post": post_text,
-            "brief": brief
+            "post_text": post_text,
+            "brief": brief,
+            "blotato_account_id": self.blotato_account_id
         }
+
+        if not skip_post and final_img:
+            self.post_blotato(post_text, final_img)
+            result["posted"] = True
+        else:
+            result["posted"] = False
+            
+        return result

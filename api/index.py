@@ -142,10 +142,32 @@ def auto_process():
 
 # ============== TELEGRAM BOT ==============
 
-def send_telegram(chat_id: str, text: str, cfg: Config):
-    """Send a message via Telegram bot."""
-    url = f"https://api.telegram.org/bot{cfg.telegram_bot_token}/sendMessage"
-    requests.post(url, json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"})
+def send_telegram(chat_id: str, text: str, cfg: Config, reply_markup: dict = None, photo_url: str = None):
+    """Send a message (optionally with photo and keyboard) via Telegram bot."""
+    if photo_url:
+        url = f"https://api.telegram.org/bot{cfg.telegram_bot_token}/sendPhoto"
+        payload = {
+            "chat_id": chat_id,
+            "photo": photo_url,
+            "caption": text,
+            "parse_mode": "HTML"
+        }
+    else:
+        url = f"https://api.telegram.org/bot{cfg.telegram_bot_token}/sendMessage"
+        payload = {
+            "chat_id": chat_id, 
+            "text": text, 
+            "parse_mode": "HTML"
+        }
+    
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
+        
+    try:
+        r = requests.post(url, json=payload, timeout=10)
+        r.raise_for_status()
+    except Exception as e:
+        logger.error(f"Telegram send failed: {e}")
 
 def extract_url(text: str) -> str:
     """Extract YouTube or Twitter URL from message text."""
@@ -164,12 +186,78 @@ def extract_url(text: str) -> str:
 # Store active client per chat (in-memory, resets on deploy - fine for single admin)
 active_client = {}
 
+def handle_callback_query(callback, cfg: Config):
+    """Handle approval/cancel and style buttons."""
+    chat_id = str(callback.get('message', {}).get('chat', {}).get('id', ''))
+    data = callback.get('data', '')
+    query_id = callback.get('id')
+    clients_mgr = ClientManager(cfg)
+    
+    # Callback format: "action:client_name:payload"
+    parts = data.split(':')
+    if len(parts) < 3:
+        return jsonify({"ok": True})
+    
+    action, client_name, payload = parts[0], parts[1], parts[2]
+    q = SimpleQueue(cfg)
+    
+    # Answer callback to remove loading state in Telegram
+    requests.post(f"https://api.telegram.org/bot{cfg.telegram_bot_token}/answerCallbackQuery", 
+                  json={"callback_query_id": query_id})
+
+    if action == "setstyle":
+        clients_mgr.update_settings(client_name, {"style": payload})
+        send_telegram(chat_id, f"✅ Style for <b>{client_name}</b> set to: <b>{payload}</b>", cfg)
+        return jsonify({"ok": True})
+
+    preview_key = f"preview:{client_name}:{payload}"
+    if action == "cancel":
+        if q.redis: q.redis.delete(preview_key)
+        send_telegram(chat_id, f"❌ Post cancelled for <b>{client_name}</b>.", cfg)
+        return jsonify({"ok": True})
+
+    if action == "post":
+        if not q.redis:
+            send_telegram(chat_id, "❌ Error: Redis not available for preview.", cfg)
+            return jsonify({"ok": True})
+            
+        preview_data_raw = q.redis.get(preview_key)
+        if not preview_data_raw:
+            send_telegram(chat_id, "❌ Error: Preview data expired or not found.", cfg)
+            return jsonify({"ok": True})
+        
+        preview_data = json.loads(preview_data_raw)
+        url = preview_data.get('url')
+        post_text = preview_data.get('post_text')
+        image_url = preview_data.get('image_url')
+        blotato_id = preview_data.get('blotato_account_id')
+        
+        send_telegram(chat_id, f"🚀 Posting to LinkedIn for <b>{client_name}</b>...", cfg)
+        
+        try:
+            pipeline = ContentPipeline(cfg, url, blotato_account_id=blotato_id)
+            pipeline.post_blotato(post_text, image_url)
+            q.mark_done(url, client_name)
+            q.redis.delete(preview_key)
+            send_telegram(chat_id, f"✅ <b>Successfully posted to LinkedIn!</b>\nClient: {client_name}", cfg)
+        except Exception as e:
+            send_telegram(chat_id, f"❌ Failed to post: {str(e)[:200]}", cfg)
+            
+    return jsonify({"ok": True})
+
 @app.route('/telegram-webhook', methods=['POST'])
 def telegram_webhook():
     cfg = Config()
     data = request.json
     
-    if not data or 'message' not in data:
+    if not data:
+        return jsonify({"ok": True})
+
+    # Handle Callback Queries (Buttons)
+    if 'callback_query' in data:
+        return handle_callback_query(data['callback_query'], cfg)
+    
+    if 'message' not in data:
         return jsonify({"ok": True})
     
     message = data['message']
@@ -187,18 +275,47 @@ def telegram_webhook():
     # Command: /start
     if text == '/start':
         send_telegram(chat_id, 
-            "🚀 <b>LinkedIn Poster Bot</b>\n\n"
+            "🚀 <b>LinkedIn Poster Bot Pro</b>\n\n"
             "Send me a YouTube or Twitter/X link and I'll queue it for LinkedIn.\n\n"
             "<b>Commands:</b>\n"
             "/dashboard - Full overview of all queues\n"
             "/queue - Show current client's queue\n"
-            "/history - Recent posts\n"
+            "/preview - Toggle Preview Mode (approval buttons)\n"
+            "/style - Choose post style (Story, Curiosity, etc.)\n"
             "/clients - List all clients\n"
-            "/client &lt;name&gt; - Switch active client\n"
             "/add &lt;name&gt; &lt;blotato_id&gt; - Add new client\n"
+            "/client &lt;name&gt; - Switch active client\n"
+            "/delete_client &lt;name&gt; - Remove a client\n"
+            "/go - Process next URL now\n"
+            "/history - Recent posts\n"
             "/remove &lt;number&gt; - Remove URL from queue\n"
-            "/process - Process next URL now\n"
             "/clear - Clear current queue", cfg)
+        return jsonify({"ok": True})
+    
+    # Command: /style - Toggle style
+    if text.startswith('/style'):
+        current = active_client.get(chat_id, 'default')
+        parts = text.split()
+        styles = ["default", "thought_leader", "how_to", "curiosity", "story"]
+        
+        if len(parts) < 2:
+            kb = {
+                "inline_keyboard": [[
+                    {"text": s.replace('_', ' ').title(), "callback_data": f"setstyle:{current}:{s}"} 
+                    for s in styles[:3]
+                ], [
+                    {"text": s.replace('_', ' ').title(), "callback_data": f"setstyle:{current}:{s}"}
+                    for s in styles[3:]
+                ]]
+            }
+            send_telegram(chat_id, f"🎨 <b>Choose post style for {current}:</b>", cfg, reply_markup=kb)
+        else:
+            style = parts[1].lower()
+            if style in styles:
+                clients.update_settings(current, {"style": style})
+                send_telegram(chat_id, f"✅ Style for <b>{current}</b> set to: <b>{style}</b>", cfg)
+            else:
+                send_telegram(chat_id, f"❌ Invalid style. Choose from: {', '.join(styles)}", cfg)
         return jsonify({"ok": True})
     
     # Command: /dashboard - Full overview
@@ -215,14 +332,22 @@ def telegram_webhook():
         for name in client_names:
             urls = q.get_urls(name)
             history = q.get_history(name)
+            
+            # Get settings
+            info = clients.get_client(name) if name != 'default' else {}
+            preview = "👁" if (info or {}).get('preview_mode') else "🚀"
+            style = (info or {}).get('style', 'default')
+            
             marker = " 👈" if name == current else ""
-            msg += f"<b>{name}</b>{marker}\n"
+            msg += f"<b>{name}</b> {preview} {marker}\n"
             msg += f"  📝 Queue: {len(urls)}\n"
-            msg += f"  ✅ Posted: {len(history)}\n\n"
+            msg += f"  🎨 Style: {style}\n"
+            msg += f"  ✅ Total: {len(history)}\n\n"
             total_queued += len(urls)
         
         msg += f"━━━━━━━━━━━━━━━\n"
-        msg += f"Total pending: {total_queued}"
+        msg += f"Total pending: {total_queued}\n"
+        msg += f"🚀 = Auto-Post | 👁 = Preview"
         send_telegram(chat_id, msg, cfg)
         return jsonify({"ok": True})
     
@@ -307,43 +432,59 @@ def telegram_webhook():
         # Prevent duplicate processing with a lock
         lock_key = f"processing_lock:{current}"
         try:
-            # Check if already processing (lock exists)
             if q.redis:
                 existing_lock = q.redis.get(lock_key)
                 if existing_lock:
                     send_telegram(chat_id, f"⏳ Already processing for <b>{current}</b>. Please wait...", cfg)
                     return jsonify({"ok": True})
-                # Set lock for 120 seconds (max processing time)
                 q.redis.setex(lock_key, 120, "1")
-        except:
-            pass  # Continue even if lock fails
+        except: pass
         
         url = q.pop_next(current)
         if not url:
-            # Release lock
             try:
                 if q.redis: q.redis.delete(lock_key)
             except: pass
             send_telegram(chat_id, f"📭 Queue for <b>{current}</b> is empty!", cfg)
         else:
+            client_info = clients.get_client(current) or {}
+            preview_enabled = client_info.get('preview_mode', False)
+            blotato_account_id = client_info.get('blotato_account_id', cfg.blotato_account_id)
+            style = client_info.get('style', 'default')
+            
             remaining = len(q.get_urls(current))
-            send_telegram(chat_id, f"⏳ Processing for <b>{current}</b>...\n\n🔗 {url}\n📝 {remaining} left in queue", cfg)
+            status_msg = "👀 Previewing" if preview_enabled else "⏳ Processing"
+            send_telegram(chat_id, f"{status_msg} for <b>{current}</b>...\n\n🔗 {url}\n📝 {remaining} left in queue", cfg)
+            
             try:
-                # Get blotato_account_id for this client
-                if current == 'default':
-                    blotato_account_id = cfg.blotato_account_id
-                else:
-                    client_info = clients.get_client(current)
-                    blotato_account_id = client_info.get('blotato_account_id', cfg.blotato_account_id)
+                pipeline = ContentPipeline(cfg, url, blotato_account_id=blotato_account_id, style=style)
+                # Run with skip_post=preview_enabled
+                result = pipeline.run_all(skip_post=preview_enabled)
                 
-                pipeline = ContentPipeline(cfg, url, blotato_account_id=blotato_account_id)
-                pipeline.run_all()
-                q.mark_done(url, current)
-                send_telegram(chat_id, f"✅ <b>Posted to LinkedIn!</b>\n\nClient: {current}\n🔗 {url[:50]}...", cfg)
+                if preview_enabled:
+                    # Store result in Redis for approval
+                    url_hash = hashlib.md5(url.encode()).hexdigest()[:10]
+                    preview_key = f"preview:{current}:{url_hash}"
+                    if q.redis:
+                        q.redis.setex(preview_key, 3600 * 24, json.dumps(result)) # 24h expiry
+                    
+                        # Send preview to Telegram with buttons
+                        kb = {
+                            "inline_keyboard": [[
+                                {"text": "✅ Post Now", "callback_data": f"post:{current}:{url_hash}"},
+                                {"text": "❌ Cancel", "callback_data": f"cancel:{current}:{url_hash}"}
+                            ]]
+                        }
+                        preview_text = f"📝 <b>PREVIEW for {current}</b>\n\n{result['post_text'][:3500]}"
+                        send_telegram(chat_id, preview_text, cfg, reply_markup=kb, photo_url=result.get('image_url'))
+                    else:
+                        send_telegram(chat_id, "❌ Redis unavailable, could not store preview.", cfg)
+                else:
+                    q.mark_done(url, current)
+                    send_telegram(chat_id, f"✅ <b>Posted to LinkedIn!</b>\n\nClient: {current}\n🔗 {url[:50]}...", cfg)
             except Exception as e:
-                send_telegram(chat_id, f"❌ Failed: {str(e)[:200]}", cfg)
+                send_telegram(chat_id, f"❌ Failed: {str(e)[:400]}", cfg)
             finally:
-                # Release lock
                 try:
                     if q.redis: q.redis.delete(lock_key)
                 except: pass
@@ -394,8 +535,17 @@ def telegram_webhook():
             send_telegram(chat_id, f"✅ Added client <b>{name}</b> and switched to it.", cfg)
         return jsonify({"ok": True})
     
-    # Handle URL - add to queue
-    url = extract_url(text)
+    # Command: /delete_client <name>
+    if text.startswith('/delete_client '):
+        name = text[15:].strip().lower()
+        if name == 'default':
+            send_telegram(chat_id, "❌ Cannot delete the default client.", cfg)
+        else:
+            clients.remove_client(name)
+            if active_client.get(chat_id) == name:
+                active_client[chat_id] = 'default'
+            send_telegram(chat_id, f"🗑 Deleted client <b>{name}</b>. Switched to 'default'.", cfg)
+        return jsonify({"ok": True})
     if url:
         current = active_client.get(chat_id, 'default')
         q.add_url(url, current)
@@ -428,26 +578,45 @@ def auto_process_all():
             continue
         
         try:
-            # Get blotato_account_id for this client
-            if client_name == 'default':
-                blotato_account_id = cfg.blotato_account_id
+            # Get settings for this client
+            client_info = clients.get_client(client_name) or {}
+            preview_enabled = client_info.get('preview_mode', False)
+            blotato_account_id = client_info.get('blotato_account_id', cfg.blotato_account_id)
+            style = client_info.get('style', 'default')
+            
+            pipeline = ContentPipeline(cfg, url, blotato_account_id=blotato_account_id, style=style)
+            result = pipeline.run_all(skip_post=preview_enabled)
+            
+            if preview_enabled:
+                # Store preview and notify admin
+                url_hash = hashlib.md5(url.encode()).hexdigest()[:10]
+                preview_key = f"preview:{client_name}:{url_hash}"
+                if q.redis:
+                    q.redis.setex(preview_key, 3600 * 24, json.dumps(result))
+                    
+                    if cfg.telegram_bot_token and cfg.telegram_admin_chat_id:
+                        kb = {
+                            "inline_keyboard": [[
+                                {"text": "✅ Post Now", "callback_data": f"post:{client_name}:{url_hash}"},
+                                {"text": "❌ Cancel", "callback_data": f"cancel:{client_name}:{url_hash}"}
+                            ]]
+                        }
+                        preview_text = f"📝 <b>AUTO-PREVIEW for {client_name}</b>\n\n{result.get('post_text', '')[:3500]}"
+                        send_telegram(cfg.telegram_admin_chat_id, preview_text, cfg, reply_markup=kb, photo_url=result.get('image_url'))
+                    
+                results.append({"client": client_name, "url": url, "status": "previewed"})
             else:
-                client_info = clients.get_client(client_name)
-                blotato_account_id = client_info.get('blotato_account_id', cfg.blotato_account_id)
-            
-            pipeline = ContentPipeline(cfg, url, blotato_account_id=blotato_account_id)
-            pipeline.run_all()
-            q.mark_done(url, client_name)
-            results.append({"client": client_name, "url": url, "status": "posted"})
-            
-            # Send Telegram notification
-            if cfg.telegram_bot_token and cfg.telegram_admin_chat_id:
-                remaining = len(q.get_urls(client_name))
-                send_telegram(cfg.telegram_admin_chat_id, 
-                    f"🚀 <b>Auto-posted to LinkedIn!</b>\n\n"
-                    f"Client: {client_name}\n"
-                    f"🔗 {url[:50]}...\n"
-                    f"📝 {remaining} left in queue", cfg)
+                q.mark_done(url, client_name)
+                results.append({"client": client_name, "url": url, "status": "posted"})
+                
+                # Send Telegram notification
+                if cfg.telegram_bot_token and cfg.telegram_admin_chat_id:
+                    remaining = len(q.get_urls(client_name))
+                    send_telegram(cfg.telegram_admin_chat_id, 
+                        f"🚀 <b>Auto-posted to LinkedIn!</b>\n\n"
+                        f"Client: {client_name}\n"
+                        f"🔗 {url[:50]}...\n"
+                        f"📝 {remaining} left in queue", cfg)
         except Exception as e:
             logger.error(f"Auto process failed for {client_name}: {e}")
             results.append({"client": client_name, "url": url, "status": "failed", "error": str(e)})

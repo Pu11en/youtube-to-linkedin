@@ -22,18 +22,24 @@ class TwitterService:
 
     def get_tweet_text(self, url: str) -> str:
         """
-        Scrapes tweet text using ScrapingDog.
+        Scrapes tweet text using ScrapingDog with Nitter fallback.
         """
-        if not self.api_key:
-            logger.warning("No SCRAPINGDOG_API_KEY provided. Returning mock data.")
-            return "Twitter API Key missing. Please set SCRAPINGDOG_API_KEY."
-
         tweet_id = self._extract_id(url)
         if not tweet_id:
             raise ValueError(f"Could not extract tweet ID from {url}")
 
+        if self.api_key:
+            try:
+                # Primary: Scrapingdog
+                return self._scrape_scrapingdog(tweet_id)
+            except Exception as e:
+                logger.warning(f"Scrapingdog failed: {e}. Trying Nitter fallback...")
+        
+        # Fallback: Nitter
+        return self._scrape_nitter(tweet_id)
+
+    def _scrape_scrapingdog(self, tweet_id: str) -> str:
         # Correct endpoint for single tweet scraping (X Post Scraper API)
-        # Based on: https://api.scrapingdog.com/x/post
         api_url = "http://api.scrapingdog.com/x/post"
         params = {"api_key": self.api_key, "tweetId": tweet_id}
         
@@ -49,16 +55,47 @@ class TwitterService:
                 break
             except Exception as e:
                 if attempt == 2:
-                    raise RuntimeError(f"Failed to fetch tweet {tweet_id}: {e}")
+                    raise RuntimeError(f"Scrapingdog fetch failed: {e}")
                 time.sleep(1)
         
         data = r.json()
         text = self._parse_text(data)
-        
         if not text:
-            raise RuntimeError("Tweet text was empty.")
-            
+            raise RuntimeError("Tweet text was empty from Scrapingdog.")
         return text
+
+    def _scrape_nitter(self, tweet_id: str) -> str:
+        """Uses a public Nitter instance as fallback."""
+        # Use a reliable Nitter instance
+        nitter_instances = [
+            "https://nitter.net",
+            "https://nitter.cz",
+            "https://nitter.it"
+        ]
+        
+        for instance in nitter_instances:
+            try:
+                logger.info(f"Trying Nitter ({instance}) for {tweet_id}...")
+                # Nitter format usually: instance/i/status/id
+                # But we can try the RSS feed or just the page
+                r = requests.get(f"{instance}/i/status/{tweet_id}", timeout=15)
+                if r.ok:
+                    # Very basic scrape from HTML
+                    # Look for <div class="tweet-content media-body">
+                    from html import unescape
+                    content_match = re.search(r'<div class="tweet-content media-body">(.*?)</div>', r.text, re.DOTALL)
+                    if content_match:
+                        raw_html = content_match.group(1)
+                        # Strip HTML tags
+                        text = re.sub(r'<[^>]+>', '', raw_html)
+                        text = unescape(text).strip()
+                        if text:
+                            return f"Tweet (via Nitter): {text}"
+            except Exception as e:
+                logger.warning(f"Nitter instance {instance} failed: {e}")
+                continue
+                
+        raise RuntimeError(f"All scraping methods failed for tweet {tweet_id}")
 
     def _extract_id(self, url: str) -> str:
         match = re.search(r"/status/(\d+)", url)

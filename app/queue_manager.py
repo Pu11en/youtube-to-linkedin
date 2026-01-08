@@ -37,10 +37,18 @@ class ClientManager:
             logger.error(f"Redis get clients failed: {e}")
             return {}
     
-    def add_client(self, name: str, blotato_account_id: str):
+    def add_client(self, name: str, blotato_account_id: str, settings: dict = None):
         """Add or update a client."""
         clients = self.get_all()
-        clients[name] = {"blotato_account_id": blotato_account_id}
+        client_data = {"blotato_account_id": blotato_account_id}
+        if settings:
+            client_data.update(settings)
+        elif name in clients:
+            # Preserve existing settings if only updating ID
+            clients[name].update(client_data)
+            client_data = clients[name]
+        
+        clients[name] = client_data
         if not self.redis:
             self._local_clients = clients
             return
@@ -48,6 +56,16 @@ class ClientManager:
             self.redis.set(self.KEY, json.dumps(clients))
         except Exception as e:
             logger.error(f"Redis set clients failed: {e}")
+    
+    def update_settings(self, name: str, settings: dict):
+        """Update specific settings for a client."""
+        clients = self.get_all()
+        if name in clients:
+            clients[name].update(settings)
+            if self.redis:
+                self.redis.set(self.KEY, json.dumps(clients))
+            else:
+                self._local_clients = clients
     
     def get_client(self, name: str) -> Optional[dict]:
         """Get a single client's config."""
