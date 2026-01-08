@@ -445,6 +445,32 @@ def telegram_webhook():
         send_telegram(chat_id, f"🗑 Cleared queue for <b>{current}</b>", cfg)
         return jsonify({"ok": True})
     
+    # Command: /test - Preview next URL without removing from queue
+    if text == '/test':
+        current = active_client.get(chat_id, 'drew')
+        urls = q.get_urls(current)
+        if not urls:
+            send_telegram(chat_id, f"📭 Queue for <b>{current}</b> is empty!", cfg)
+            return jsonify({"ok": True})
+        
+        url = urls[0]  # Peek, don't pop
+        client_info = clients.get_client(current) or {}
+        blotato_account_id = client_info.get('blotato_account_id', cfg.blotato_account_id)
+        style = client_info.get('style', 'default')
+        
+        send_telegram(chat_id, f"🧪 <b>TEST MODE</b> for {current}...\n\n🔗 {url}\n\n(URL stays in queue)", cfg)
+        
+        try:
+            pipeline = ContentPipeline(cfg, url, blotato_account_id=blotato_account_id, style=style)
+            result = pipeline.run_all(skip_post=True)
+            
+            preview_text = f"🧪 <b>TEST PREVIEW for {current}</b>\n\n<b>Style:</b> {style}\n\n{result['post_text'][:3500]}"
+            send_telegram(chat_id, preview_text, cfg, photo_url=result.get('image_url'))
+            send_telegram(chat_id, "✅ Test complete. URL still in queue.\nUse /go to generate for real.", cfg)
+        except Exception as e:
+            send_telegram(chat_id, f"❌ Test failed: {str(e)[:400]}", cfg)
+        return jsonify({"ok": True})
+    
     # Command: /process or /go - Process next URL (always preview first)
     if text == '/process' or text == '/go':
         current = active_client.get(chat_id, 'drew')
