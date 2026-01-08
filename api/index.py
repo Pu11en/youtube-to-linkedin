@@ -303,8 +303,27 @@ def telegram_webhook():
     # Command: /process or /go - Process next URL now
     if text == '/process' or text == '/go':
         current = active_client.get(chat_id, 'default')
+        
+        # Prevent duplicate processing with a lock
+        lock_key = f"processing_lock:{current}"
+        try:
+            # Check if already processing (lock exists)
+            if q.redis:
+                existing_lock = q.redis.get(lock_key)
+                if existing_lock:
+                    send_telegram(chat_id, f"⏳ Already processing for <b>{current}</b>. Please wait...", cfg)
+                    return jsonify({"ok": True})
+                # Set lock for 120 seconds (max processing time)
+                q.redis.setex(lock_key, 120, "1")
+        except:
+            pass  # Continue even if lock fails
+        
         url = q.pop_next(current)
         if not url:
+            # Release lock
+            try:
+                if q.redis: q.redis.delete(lock_key)
+            except: pass
             send_telegram(chat_id, f"📭 Queue for <b>{current}</b> is empty!", cfg)
         else:
             remaining = len(q.get_urls(current))
@@ -323,6 +342,11 @@ def telegram_webhook():
                 send_telegram(chat_id, f"✅ <b>Posted to LinkedIn!</b>\n\nClient: {current}\n🔗 {url[:50]}...", cfg)
             except Exception as e:
                 send_telegram(chat_id, f"❌ Failed: {str(e)[:200]}", cfg)
+            finally:
+                # Release lock
+                try:
+                    if q.redis: q.redis.delete(lock_key)
+                except: pass
         return jsonify({"ok": True})
     
     # Command: /clients
