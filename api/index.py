@@ -233,8 +233,8 @@ def telegram_webhook():
         if not urls:
             send_telegram(chat_id, f"📭 Queue for <b>{current}</b> is empty!", cfg)
         else:
-            # Post times (UTC): 8am, 12pm, 3pm, 6pm, 9pm
-            post_hours = [8, 12, 15, 18, 21]
+            # Post times (UTC): 9am, 5pm
+            post_hours = [9, 17]
             now = datetime.utcnow()
             
             # Find next post times
