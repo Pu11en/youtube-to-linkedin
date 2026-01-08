@@ -297,14 +297,34 @@ def telegram_webhook():
     # Command: /stop - Force quit all processing
     if text == '/stop':
         if q.redis:
-            # Clear all processing locks
             all_clients = ['drew'] + list(clients.get_all().keys())
-            cleared = 0
+            cleared_locks = 0
+            cleared_previews = 0
+            
             for client_name in all_clients:
+                # Clear processing locks
                 lock_key = f"processing_lock:{client_name}"
                 if q.redis.delete(lock_key):
-                    cleared += 1
-            send_telegram(chat_id, f"🛑 <b>Force stopped!</b>\n\nCleared {cleared} processing lock(s).", cfg)
+                    cleared_locks += 1
+            
+            # Clear ALL preview keys using scan
+            try:
+                cursor = 0
+                while True:
+                    cursor, keys = q.redis.scan(cursor, match="preview:*", count=100)
+                    for key in keys:
+                        q.redis.delete(key)
+                        cleared_previews += 1
+                    if cursor == 0:
+                        break
+            except:
+                pass
+            
+            send_telegram(chat_id, 
+                f"🛑 <b>FULL STOP!</b>\n\n"
+                f"✅ Cleared {cleared_locks} processing lock(s)\n"
+                f"✅ Cleared {cleared_previews} pending preview(s)\n\n"
+                f"Ready for new commands.", cfg)
         else:
             send_telegram(chat_id, "❌ Redis not available.", cfg)
         return jsonify({"ok": True})
