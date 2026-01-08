@@ -54,8 +54,9 @@ class Config:
     blotato_account_id: str = os.getenv("BLOTATO_ACCOUNT_ID", "")
     
     # Queue (Upstash/Vercel KV)
-    kv_url: str = os.getenv("KV_URL", os.getenv("UPSTASH_REDIS_REST_URL", ""))
-    kv_token: str = os.getenv("KV_TOKEN", os.getenv("UPSTASH_REDIS_REST_TOKEN", ""))
+    kv_url: str = os.getenv("KV_REST_API_URL", os.getenv("KV_URL", os.getenv("UPSTASH_REDIS_REST_URL", "")))
+    kv_token: str = os.getenv("KV_REST_API_TOKEN", os.getenv("KV_TOKEN", os.getenv("UPSTASH_REDIS_REST_TOKEN", "")))
+
     
     # Security
     cron_secret: str = os.getenv("CRON_SECRET", "")
