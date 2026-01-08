@@ -157,7 +157,13 @@
 </head>
 <body>
     <div class="container">
-        <h1>YT → LinkedIn</h1>
+        <h1 id="mainTitle">YT → LinkedIn</h1>
+
+        <!-- Platform Selector -->
+        <div style="margin-bottom: 15px; display: flex; gap: 10px;">
+            <button id="platformYT" class="tab-btn active" onclick="setPlatform('youtube')" style="width: 48%;">🎬 YouTube</button>
+            <button id="platformTW" class="tab-btn" onclick="setPlatform('twitter')" style="width: 48%;">🐦 Twitter/X</button>
+        </div>
 
         <div style="margin-bottom: 15px;">
             <button id="tabQueue" class="tab-btn active" onclick="showTab('queue')">Queue Editor</button>
@@ -174,7 +180,7 @@
             <!-- Add More Section -->
             <div class="add-more-section">
                 <label style="font-size: 0.85rem; font-weight: bold; display: block; margin-bottom: 8px;">➕ Add URLs to Queue:</label>
-                <textarea id="queueText" placeholder="Paste YouTube URLs here (one per line)..."></textarea>
+                <textarea id="queueText" placeholder="Paste URLs here (YouTube or Twitter, one per line)..."></textarea>
                 <button onclick="saveQueue()">Add to Queue</button>
             </div>
             
@@ -185,7 +191,7 @@
         <!-- QUICK ADD TAB -->
         <div id="sectionSingle" class="card v-hidden">
             <h2>Quick Add</h2>
-            <input type="text" id="singleUrl" placeholder="https://youtube.com/watch?v=...">
+            <input type="text" id="singleUrl" placeholder="Paste YouTube or Twitter URL...">
             
             <div style="margin: 15px 0;">
                 <label style="display: block; margin-bottom: 5px; font-weight: bold;">Mode:</label>
@@ -270,10 +276,21 @@
             return checkDate;
         }
 
-        // Extract video ID for display
+        // Extract video ID for display (works for YouTube and Twitter)
         function extractVideoId(url) {
-            const match = url.match(/(?:v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
-            return match ? match[1] : url.substring(0, 30) + '...';
+            // YouTube
+            const ytMatch = url.match(/(?:v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
+            if (ytMatch) return ytMatch[1];
+            // Twitter/X
+            const twMatch = url.match(/status\/(\d+)/);
+            if (twMatch) return '🐦 ' + twMatch[1].substring(0, 8) + '...';
+            return url.substring(0, 30) + '...';
+        }
+
+        // Detect platform from URL
+        function detectPlatform(url) {
+            if (url.includes('twitter.com') || url.includes('x.com')) return 'twitter';
+            return 'youtube';
         }
 
         // Render the queue display
@@ -281,7 +298,7 @@
             const display = document.getElementById('queueDisplay');
             
             if (!urls || urls.length === 0) {
-                display.innerHTML = '<div class="queue-empty">No videos in queue. Add URLs below!</div>';
+                display.innerHTML = '<div class="queue-empty">No items in queue. Add URLs below!</div>';
                 return;
             }
             
@@ -291,11 +308,13 @@
                 const scheduledTime = getScheduledTime(index);
                 const isNext = index === 0;
                 const videoId = extractVideoId(url);
+                const platform = detectPlatform(url);
+                const icon = platform === 'twitter' ? '🐦' : '🎬';
                 
                 html += `
                     <div class="queue-item ${isNext ? 'next' : ''}">
                         <div class="queue-item-info">
-                            <div class="queue-item-url" title="${url}">🎬 ${videoId}</div>
+                            <div class="queue-item-url" title="${url}">${icon} ${videoId}</div>
                             <div class="queue-item-time">📅 ${formatChicagoTime(scheduledTime)} CT</div>
                         </div>
                         <span class="queue-item-badge">${isNext ? '⚡ UP NEXT' : '#' + (index + 1)}</span>
@@ -304,6 +323,26 @@
             });
             
             display.innerHTML = html;
+        }
+
+        // Platform selector
+        let currentPlatform = 'youtube';
+        function setPlatform(platform) {
+            currentPlatform = platform;
+            document.getElementById('platformYT').classList.toggle('active', platform === 'youtube');
+            document.getElementById('platformTW').classList.toggle('active', platform === 'twitter');
+            document.getElementById('mainTitle').innerText = platform === 'youtube' ? 'YT → LinkedIn' : '𝕏 → LinkedIn';
+            
+            // Update placeholders
+            const queueText = document.getElementById('queueText');
+            const singleUrl = document.getElementById('singleUrl');
+            if (platform === 'twitter') {
+                queueText.placeholder = 'Paste Twitter/X URLs here (one per line)...';
+                singleUrl.placeholder = 'https://twitter.com/user/status/...';
+            } else {
+                queueText.placeholder = 'Paste YouTube URLs here (one per line)...';
+                singleUrl.placeholder = 'https://youtube.com/watch?v=...';
+            }
         }
 
         function showTab(tab) {

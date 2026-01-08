@@ -4,6 +4,21 @@ from urllib.parse import urlparse, parse_qs
 
 logger = logging.getLogger(__name__)
 
+def detect_platform(url: str) -> str:
+    if not url: return "youtube"
+    url = url.lower()
+    if "twitter.com" in url or "x.com" in url:
+        return "twitter"
+    return "youtube"
+
+def extract_tweet_id(url: str) -> str:
+    """Extracts numeric status ID from Twitter/X URLs"""
+    if not url: return ""
+    match = re.search(r"/status/(\d+)", url)
+    if match:
+        return match.group(1)
+    return ""
+
 def extract_youtube_id(url: str) -> str:
     """
     Robustly extracts the 11-character YouTube video ID from various URL formats.

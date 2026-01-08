@@ -21,15 +21,16 @@ from youtube_transcript_api.proxies import GenericProxyConfig
 from youtube_transcript_api.formatters import TextFormatter
 
 from app.config import Config
-from app.utils import extract_youtube_id
+from app.utils import extract_youtube_id, detect_platform
+from app.twitter_service import TwitterService
 
 logger = logging.getLogger(__name__)
 
 class ContentPipeline:
-    def __init__(self, config: Config, youtube_url: str = ""):
+    def __init__(self, config: Config, url: str = ""):
         self.cfg = config
-        self.youtube_url = youtube_url
-        self.video_id = extract_youtube_id(youtube_url) if youtube_url else ""
+        self.url = url
+        self.platform = detect_platform(url)
         
         # Initialize Gemini Client
         if config.gemini_api_key and genai:
@@ -51,9 +52,18 @@ class ContentPipeline:
         else:
             self.anthropic_client = None
 
+    def get_content(self) -> str:
+        """Fetches content based on platform."""
+        if self.platform == "twitter":
+            ts = TwitterService(self.cfg.scrapingdog_api_key)
+            return ts.get_tweet_text(self.url)
+        else:
+            return self.get_transcript()
+
     def get_transcript(self) -> str:
         """Fetches and formats transcript from YouTube."""
-        if not self.video_id:
+        video_id = extract_youtube_id(self.url)
+        if not video_id:
             raise ValueError("No valid video ID extracted from URL")
 
         # Configure proxy if available
@@ -105,12 +115,13 @@ class ContentPipeline:
                 logger.error(f"Transcript failed: {e}")
                 raise RuntimeError(f"Could not get transcript. Check proxy or if video has CC. Error: {e}")
 
-    def generate_summary(self, transcript: str) -> str:
-        """Uses Gemini to summarize the transcript."""
+    def generate_summary(self, content: str) -> str:
+        """Uses Gemini to summarize the content."""
         if not self.gemini_client:
             raise RuntimeError("Gemini API key not configured or SDK missing")
             
-        prompt = f"Summarize this YouTube transcript into a structured guide with Title, Key Points, and Workflow. Return plain text.\n\nTRANSCRIPT:\n{transcript}"
+        source_label = "YouTube transcript" if self.platform == "youtube" else "Tweet text"
+        prompt = f"Summarize this {source_label} into a structured guide with Title, Key Points, and Workflow. Return plain text.\n\nCONTENT:\n{content}"
         try:
             response = self.gemini_client.models.generate_content(
                 model=self.cfg.gemini_model,
@@ -195,12 +206,15 @@ class ContentPipeline:
                 
         raise TimeoutError("Kie image generation timed out")
 
-    def generate_post_claude(self, transcript: str) -> str:
+    def generate_post_claude(self, content: str) -> str:
         """Generates a LinkedIn post using Claude."""
         if not self.anthropic_client:
             raise RuntimeError("Anthropic API key not configured or SDK missing")
-            
-        prompt = f"Write a high-converting LinkedIn post from this transcript. Hook, bullets, CTA. Plain text.\n\nTRANSCRIPT:\n{transcript}"
+        
+        if self.platform == "twitter":
+            prompt = f"Write a high-converting LinkedIn post expanding on this tweet. Hook, bullets, CTA. Plain text.\n\nTWEET:\n{content}"
+        else:
+            prompt = f"Write a high-converting LinkedIn post from this transcript. Hook, bullets, CTA. Plain text.\n\nTRANSCRIPT:\n{content}"
         
         try:
             msg = self.anthropic_client.messages.create(
@@ -304,8 +318,8 @@ class ContentPipeline:
 
     def run_all(self) -> Dict[str, Any]:
         """Runs the full pipeline."""
-        transcript = self.get_transcript()
-        summary = self.generate_summary(transcript)
+        content = self.get_content()
+        summary = self.generate_summary(content)
         brief = self.generate_brief(summary)
         
         try:
@@ -315,7 +329,7 @@ class ContentPipeline:
             logger.error(f"Image generation pipeline failed: {e}")
             final_img = "" # Continue without image if it fails
             
-        post_text = self.generate_post_claude(transcript)
+        post_text = self.generate_post_claude(content)
         
         if final_img:
             self.post_blotato(post_text, final_img)

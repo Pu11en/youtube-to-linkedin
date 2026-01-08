@@ -1,5 +1,11 @@
 import logging
 import traceback
+import sys
+import os
+
+# Ensure root directory is in path so we can import 'app'
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from flask import Flask, render_template, request, jsonify
 
 # Import from our new app structure
@@ -55,16 +61,16 @@ def generate_only():
     try:
         pipeline = ContentPipeline(cfg, url)
         # We only want to generate content, not post it
-        # Step 1: Transcript
-        transcript = pipeline.get_transcript()
+        # Step 1: Content (Transcript or Tweet Text)
+        content = pipeline.get_content()
         # Step 2: Summary
-        summary = pipeline.generate_summary(transcript)
+        summary = pipeline.generate_summary(content)
         # Step 3: Brief -> Image
         brief = pipeline.generate_brief(summary)
         raw_img = pipeline.generate_image_kie(brief)
         final_img = pipeline.upload_cloudinary(raw_img)
         # Step 4: Post Text
-        post_text = pipeline.generate_post_claude(transcript)
+        post_text = pipeline.generate_post_claude(content)
         
         result = {
             "url": final_img, 
@@ -132,4 +138,4 @@ def auto_process():
         return jsonify({"status": "failed", "error": str(e)}), 500
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=True, port=4000)

@@ -10,6 +10,7 @@ class Config:
     # API Keys
     gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
     anthropic_api_key: str = os.getenv("ANTHROPIC_API_KEY", "")
+    scrapingdog_api_key: str = os.getenv("SCRAPINGDOG_API_KEY", "")
     kie_api_key: str = os.getenv("KIE_API_KEY", "")
     
     # Storage (Cloudinary)
