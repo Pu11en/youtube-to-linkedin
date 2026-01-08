@@ -220,12 +220,10 @@
 
     <script>
         // Posting schedule times in Chicago (CT)
-        // 1 job with multiple hours to fit Vercel free tier limits
+        // Vercel Free Tier Limit: Max 2 jobs per day
         const POST_TIMES = [
-            { hour: 8, minute: 15 },   // ~8:15 AM
-            { hour: 12, minute: 15 },  // ~12:15 PM
-            { hour: 16, minute: 15 },  // ~4:15 PM
-            { hour: 20, minute: 15 }   // ~8:15 PM
+            { hour: 8, minute: 15 },   // 8:15 AM CT
+            { hour: 16, minute: 15 }   // 4:15 PM CT
         ];
 
         // Helper to format time in Chicago timezone
@@ -285,7 +283,7 @@
                 return;
             }
             
-            let html = '<div style="font-size: 0.75rem; color: #666; margin-bottom: 10px;">📅 Auto-posts approx 8:15am, 12:15pm, 4:15pm, 8:15pm CT</div>';
+            let html = '<div style="font-size: 0.75rem; color: #666; margin-bottom: 10px;">📅 Auto-posts at 8:15am & 4:15pm CT (Vercel Free Limit)</div>';
             
             urls.forEach((url, index) => {
                 const scheduledTime = getScheduledTime(index);
