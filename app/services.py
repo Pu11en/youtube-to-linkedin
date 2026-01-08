@@ -163,6 +163,17 @@ SUMMARY:
         """Generates an image using Kie.ai."""
         if not self.cfg.kie_api_key:
             raise RuntimeError("Kie API key not configured")
+        
+        # For SoulPrint style, prepend strict color instructions
+        if self.style == "soulprint":
+            color_prefix = """STRICT COLOR PALETTE - DO NOT DEVIATE:
+- Background: Pure BLACK (#000000)
+- Accent color: BURNT ORANGE (#CC5500) 
+- Text: WHITE or light gray
+- NO other colors allowed. Only black, burnt orange, and white/gray.
+
+"""
+            brief = color_prefix + brief
             
         headers = {
             "Authorization": f"Bearer {self.cfg.kie_api_key}", 
@@ -265,7 +276,8 @@ Return ONLY the post text."""
             raise RuntimeError(f"Claude generation failed: {e}")
 
     def upload_cloudinary(self, image_url: str) -> str:
-        """Uploads an image URL to Cloudinary and returns the secure URL."""
+        """Uploads an image URL to Cloudinary and returns the secure URL.
+        If SoulPrint style, adds logo overlay."""
         if not self.cfg.cloudinary_cloud_name:
             return image_url # Fallback if not configured
             
@@ -292,7 +304,20 @@ Return ONLY the post text."""
             upload_url = f"https://api.cloudinary.com/v1_1/{self.cfg.cloudinary_cloud_name}/image/upload"
             res = requests.post(upload_url, data=data, files=files, timeout=30)
             res.raise_for_status()
-            return res.json().get("secure_url")
+            base_url = res.json().get("secure_url")
+            
+            # If SoulPrint style, add logo overlay using Cloudinary transformations
+            if self.style == "soulprint" and base_url:
+                # The SoulPrint logo is already on Cloudinary: Vector_1_opozvz
+                # Add it as overlay in bottom-right corner
+                # Transform URL to add overlay
+                # Format: /image/upload/l_Vector_1_opozvz,w_120,g_south_east,x_30,y_30/public_id
+                base_url = base_url.replace(
+                    f"/image/upload/{public_id}",
+                    f"/image/upload/l_Vector_1_opozvz,w_100,g_south_east,x_20,y_20/{public_id}"
+                )
+            
+            return base_url
         except Exception as e:
             logger.error(f"Cloudinary upload failed: {e}")
             return image_url # Return original on failure
