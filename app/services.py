@@ -250,30 +250,54 @@ class ContentPipeline:
             return image_url # Return original on failure
 
     def post_blotato(self, text: str, image_url: str):
-        """Posts to Blotato."""
-        if not self.cfg.blotato_api_key:
-            logger.warning("Blotato API key not set, skipping post.")
-            return
+        """Posts to LinkedIn via Blotato API."""
+        # Validate required credentials
+        if not self.cfg.blotato_api_key or not self.cfg.blotato_api_key.strip():
+            raise RuntimeError("BLOTATO_API_KEY is not configured")
+        
+        if not self.cfg.blotato_account_id or not self.cfg.blotato_account_id.strip():
+            raise RuntimeError("BLOTATO_ACCOUNT_ID is not configured")
+
+        logger.info(f"Posting to LinkedIn via Blotato (account: {self.cfg.blotato_account_id[:8]}...)")
 
         headers = {
-            "blotato-api-key": self.cfg.blotato_api_key, 
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
+            "blotato-api-key": self.cfg.blotato_api_key.strip()
         }
+        
         payload = {
             "post": {
-                "accountId": self.cfg.blotato_account_id, 
+                "accountId": self.cfg.blotato_account_id.strip(),
                 "content": {
-                    "text": text, 
-                    "mediaUrls": [image_url], 
+                    "text": text,
+                    "mediaUrls": [image_url] if image_url else [],
                     "platform": "linkedin"
-                }, 
-                "target": {"targetType": "linkedin"}
+                },
+                "target": {
+                    "targetType": "linkedin"
+                }
             }
         }
         
         try:
-            r = requests.post("https://backend.blotato.com/v2/posts", headers=headers, json=payload, timeout=10)
+            r = requests.post(
+                "https://backend.blotato.com/v2/posts",
+                headers=headers,
+                json=payload,
+                timeout=30
+            )
             r.raise_for_status()
+            logger.info("Successfully posted to LinkedIn via Blotato")
+            return r.json()
+        except requests.exceptions.HTTPError as e:
+            # Log the response body for debugging 422 errors
+            error_detail = ""
+            try:
+                error_detail = f" - Response: {r.text}"
+            except:
+                pass
+            logger.error(f"Blotato post failed: {e}{error_detail}")
+            raise RuntimeError(f"Blotato post failed: {e}{error_detail}")
         except Exception as e:
             logger.error(f"Blotato post failed: {e}")
             raise RuntimeError(f"Blotato post failed: {e}")
