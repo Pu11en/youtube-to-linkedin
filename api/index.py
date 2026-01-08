@@ -354,9 +354,9 @@ def telegram_webhook():
             history = q.get_history(name)
             
             # Get settings
-            info = clients.get_client(name) if name != 'drew' else {}
-            preview = "👁" if (info or {}).get('preview_mode') else "🚀"
-            style = (info or {}).get('style', 'default')
+            info = clients.get_client(name) or {}
+            preview = "👁" if info.get('preview_mode') else "🚀"
+            style = info.get('style', 'default')
             
             marker = " 👈" if name == current else ""
             msg += f"<b>{name}</b> {preview} {marker}\n"
@@ -464,9 +464,17 @@ def telegram_webhook():
             pipeline = ContentPipeline(cfg, url, blotato_account_id=blotato_account_id, style=style)
             result = pipeline.run_all(skip_post=True)
             
-            preview_text = f"🧪 <b>TEST PREVIEW for {current}</b>\n\n<b>Style:</b> {style}\n\n{result['post_text'][:3500]}"
-            send_telegram(chat_id, preview_text, cfg, photo_url=result.get('image_url'))
-            send_telegram(chat_id, "✅ Test complete. URL still in queue.\nUse /go to generate for real.", cfg)
+            image_url = result.get('image_url', '')
+            preview_text = f"🧪 <b>TEST PREVIEW for {current}</b>\n\n<b>Style:</b> {style}\n\n{result['post_text'][:3000]}"
+            
+            if image_url:
+                # Send photo with caption
+                send_telegram(chat_id, preview_text, cfg, photo_url=image_url)
+            else:
+                # No image, just send text
+                send_telegram(chat_id, preview_text + "\n\n⚠️ No image generated", cfg)
+            
+            send_telegram(chat_id, f"✅ Test complete. URL still in queue.\n\n🖼 Image: {image_url[:100] if image_url else 'None'}\n\nUse /go to generate for real.", cfg)
         except Exception as e:
             send_telegram(chat_id, f"❌ Test failed: {str(e)[:400]}", cfg)
         return jsonify({"ok": True})
