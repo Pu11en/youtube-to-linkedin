@@ -376,7 +376,7 @@ def telegram_webhook():
             # Get settings
             info = clients.get_client(name) or {}
             preview = "👁" if info.get('preview_mode') else "🚀"
-            style = info.get('style', 'default')
+            style = info.get('style', 'soulprint')
             
             marker = " 👈" if name == current else ""
             msg += f"<b>{name}</b> {preview} {marker}\n"
@@ -476,7 +476,7 @@ def telegram_webhook():
         url = urls[0]  # Peek, don't pop
         client_info = clients.get_client(current) or {}
         blotato_account_id = client_info.get('blotato_account_id', cfg.blotato_account_id)
-        style = client_info.get('style', 'default')
+        style = client_info.get('style', 'soulprint')
         
         send_telegram(chat_id, f"🧪 <b>TEST MODE</b> for {current}...\n\n🔗 {url}\n\n(URL stays in queue)", cfg)
         
@@ -523,7 +523,7 @@ def telegram_webhook():
         else:
             client_info = clients.get_client(current) or {}
             blotato_account_id = client_info.get('blotato_account_id', cfg.blotato_account_id)
-            style = client_info.get('style', 'default')
+            style = client_info.get('style', 'soulprint')
             
             remaining = len(q.get_urls(current))
             send_telegram(chat_id, f"👀 Generating preview for <b>{current}</b>...\n\n🔗 {url}\n📝 {remaining} left in queue", cfg)
@@ -653,7 +653,7 @@ def auto_process_all():
             client_info = clients.get_client(client_name) or {}
             preview_enabled = client_info.get('preview_mode', False)
             blotato_account_id = client_info.get('blotato_account_id', cfg.blotato_account_id)
-            style = client_info.get('style', 'default')
+            style = client_info.get('style', 'soulprint')
             
             pipeline = ContentPipeline(cfg, url, blotato_account_id=blotato_account_id, style=style)
             result = pipeline.run_all(skip_post=preview_enabled)
