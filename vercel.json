@@ -10,11 +10,5 @@
             "src": "/(.*)",
             "dest": "api/index.py"
         }
-    ],
-    "crons": [
-        {
-            "path": "/api/auto_process",
-            "schedule": "0 14,16,18,20,22 * * *"
-        }
     ]
 }
