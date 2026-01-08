@@ -296,7 +296,7 @@ def telegram_webhook():
     if text == '/stop':
         if q.redis:
             # Clear all processing locks
-            all_clients = ['default'] + list(clients.get_all().keys())
+            all_clients = ['drew'] + list(clients.get_all().keys())
             cleared = 0
             for client_name in all_clients:
                 lock_key = f"processing_lock:{client_name}"
@@ -309,7 +309,7 @@ def telegram_webhook():
     
     # Command: /style - Toggle style
     if text.startswith('/style'):
-        current = active_client.get(chat_id, 'default')
+        current = active_client.get(chat_id, 'drew')
         parts = text.split()
         styles = ["default", "soulprint", "thought_leader", "how_to", "curiosity", "story"]
         
@@ -339,8 +339,8 @@ def telegram_webhook():
     # Command: /dashboard - Full overview
     if text == '/dashboard':
         all_clients = clients.get_all()
-        client_names = ['default'] + list(all_clients.keys())
-        current = active_client.get(chat_id, 'default')
+        client_names = ['drew'] + list(all_clients.keys())
+        current = active_client.get(chat_id, 'drew')
         
         msg = "📊 <b>DASHBOARD</b>\n"
         msg += f"━━━━━━━━━━━━━━━\n"
@@ -352,7 +352,7 @@ def telegram_webhook():
             history = q.get_history(name)
             
             # Get settings
-            info = clients.get_client(name) if name != 'default' else {}
+            info = clients.get_client(name) if name != 'drew' else {}
             preview = "👁" if (info or {}).get('preview_mode') else "🚀"
             style = (info or {}).get('style', 'default')
             
@@ -371,7 +371,7 @@ def telegram_webhook():
     
     # Command: /queue - Show current queue with numbers and estimated times
     if text == '/queue':
-        current = active_client.get(chat_id, 'default')
+        current = active_client.get(chat_id, 'drew')
         urls = q.get_urls(current)
         if not urls:
             send_telegram(chat_id, f"📭 Queue for <b>{current}</b> is empty!", cfg)
@@ -406,7 +406,7 @@ def telegram_webhook():
     
     # Command: /history - Recent posts
     if text == '/history':
-        current = active_client.get(chat_id, 'default')
+        current = active_client.get(chat_id, 'drew')
         history = q.get_history(current)
         if not history:
             send_telegram(chat_id, f"📭 No posts yet for <b>{current}</b>", cfg)
@@ -424,7 +424,7 @@ def telegram_webhook():
     if text.startswith('/remove '):
         try:
             num = int(text[8:].strip())
-            current = active_client.get(chat_id, 'default')
+            current = active_client.get(chat_id, 'drew')
             urls = q.get_urls(current)
             if num < 1 or num > len(urls):
                 send_telegram(chat_id, f"❌ Invalid number. Queue has {len(urls)} items.", cfg)
@@ -438,14 +438,14 @@ def telegram_webhook():
     
     # Command: /clear - Clear queue
     if text == '/clear':
-        current = active_client.get(chat_id, 'default')
+        current = active_client.get(chat_id, 'drew')
         q.set_urls([], current)
         send_telegram(chat_id, f"🗑 Cleared queue for <b>{current}</b>", cfg)
         return jsonify({"ok": True})
     
     # Command: /process or /go - Process next URL (always preview first)
     if text == '/process' or text == '/go':
-        current = active_client.get(chat_id, 'default')
+        current = active_client.get(chat_id, 'drew')
         
         # Prevent duplicate processing with a lock
         lock_key = f"processing_lock:{current}"
@@ -508,7 +508,7 @@ def telegram_webhook():
         if not all_clients:
             send_telegram(chat_id, "No clients yet. Add one with:\n/add <name> <blotato_account_id>", cfg)
         else:
-            current = active_client.get(chat_id, 'default')
+            current = active_client.get(chat_id, 'drew')
             msg = "👥 <b>Clients:</b>\n"
             for name, info in all_clients.items():
                 marker = " ✅" if name == current else ""
@@ -520,7 +520,7 @@ def telegram_webhook():
     if text.startswith('/client '):
         name = text[8:].strip().lower()
         all_clients = clients.get_all()
-        if name not in all_clients and name != 'default':
+        if name not in all_clients and name != 'drew':
             send_telegram(chat_id, f"❌ Client '{name}' not found. Use /clients to see list.", cfg)
         else:
             active_client[chat_id] = name
@@ -529,7 +529,7 @@ def telegram_webhook():
     
     # Command: /status
     if text == '/status':
-        current = active_client.get(chat_id, 'default')
+        current = active_client.get(chat_id, 'drew')
         urls = q.get_urls(current)
         send_telegram(chat_id, f"📊 <b>Status for {current}:</b>\n• Queue: {len(urls)} URLs pending", cfg)
         return jsonify({"ok": True})
@@ -550,19 +550,19 @@ def telegram_webhook():
     # Command: /delete_client <name>
     if text.startswith('/delete_client '):
         name = text[15:].strip().lower()
-        if name == 'default':
-            send_telegram(chat_id, "❌ Cannot delete the default client.", cfg)
+        if name == 'drew':
+            send_telegram(chat_id, "❌ Cannot delete drew client.", cfg)
         else:
             clients.remove_client(name)
             if active_client.get(chat_id) == name:
-                active_client[chat_id] = 'default'
-            send_telegram(chat_id, f"🗑 Deleted client <b>{name}</b>. Switched to 'default'.", cfg)
+                active_client[chat_id] = 'drew'
+            send_telegram(chat_id, f"🗑 Deleted client <b>{name}</b>. Switched to 'drew'.", cfg)
         return jsonify({"ok": True})
     
     # Handle URL - add to queue
     url = extract_url(text)
     if url:
-        current = active_client.get(chat_id, 'default')
+        current = active_client.get(chat_id, 'drew')
         q.add_url(url, current)
         queue_size = len(q.get_urls(current))
         send_telegram(chat_id, f"✅ Added to <b>{current}</b> queue!\n\n📝 Queue size: {queue_size}", cfg)
@@ -585,7 +585,7 @@ def auto_process_all():
     results = []
     
     # Process default queue (your original account)
-    all_client_names = ['default'] + list(clients.get_all().keys())
+    all_client_names = ['drew'] + list(clients.get_all().keys())
     
     for client_name in all_client_names:
         url = q.pop_next(client_name)
