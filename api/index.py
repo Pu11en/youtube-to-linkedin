@@ -280,14 +280,15 @@ def telegram_webhook():
         send_telegram(chat_id, f"🗑 Cleared queue for <b>{current}</b>", cfg)
         return jsonify({"ok": True})
     
-    # Command: /process - Process next URL now
-    if text == '/process':
+    # Command: /process or /go - Process next URL now
+    if text == '/process' or text == '/go':
         current = active_client.get(chat_id, 'default')
         url = q.pop_next(current)
         if not url:
             send_telegram(chat_id, f"📭 Queue for <b>{current}</b> is empty!", cfg)
         else:
-            send_telegram(chat_id, f"⏳ Processing for <b>{current}</b>:\n{url}", cfg)
+            remaining = len(q.get_urls(current))
+            send_telegram(chat_id, f"⏳ Processing for <b>{current}</b>...\n\n🔗 {url}\n📝 {remaining} left in queue", cfg)
             try:
                 # Get blotato_account_id for this client
                 if current == 'default':
@@ -299,7 +300,7 @@ def telegram_webhook():
                 pipeline = ContentPipeline(cfg, url, blotato_account_id=blotato_account_id)
                 pipeline.run_all()
                 q.mark_done(url, current)
-                send_telegram(chat_id, f"✅ Posted to LinkedIn for <b>{current}</b>!", cfg)
+                send_telegram(chat_id, f"✅ <b>Posted to LinkedIn!</b>\n\nClient: {current}\n🔗 {url[:50]}...", cfg)
             except Exception as e:
                 send_telegram(chat_id, f"❌ Failed: {str(e)[:200]}", cfg)
         return jsonify({"ok": True})
@@ -394,9 +395,26 @@ def auto_process_all():
             pipeline.run_all()
             q.mark_done(url, client_name)
             results.append({"client": client_name, "url": url, "status": "posted"})
+            
+            # Send Telegram notification
+            if cfg.telegram_bot_token and cfg.telegram_admin_chat_id:
+                remaining = len(q.get_urls(client_name))
+                send_telegram(cfg.telegram_admin_chat_id, 
+                    f"🚀 <b>Auto-posted to LinkedIn!</b>\n\n"
+                    f"Client: {client_name}\n"
+                    f"🔗 {url[:50]}...\n"
+                    f"📝 {remaining} left in queue", cfg)
         except Exception as e:
             logger.error(f"Auto process failed for {client_name}: {e}")
             results.append({"client": client_name, "url": url, "status": "failed", "error": str(e)})
+            
+            # Notify on failure too
+            if cfg.telegram_bot_token and cfg.telegram_admin_chat_id:
+                send_telegram(cfg.telegram_admin_chat_id,
+                    f"❌ <b>Auto-post failed</b>\n\n"
+                    f"Client: {client_name}\n"
+                    f"🔗 {url[:50]}...\n"
+                    f"Error: {str(e)[:100]}", cfg)
     
     if not results:
         return jsonify({"status": "idle", "message": "No URLs in any queue"})
