@@ -1,8 +1,8 @@
 name: Auto Post to LinkedIn
 on:
   schedule:
-    # 10 times a day: Every hour from 8am to 5pm Chicago Time (14:00 - 23:00 UTC)
-    - cron: '0 14-23 * * *'
+    # 5 times a day: 8am, 10am, 12pm, 2pm, 4pm Chicago Time (14, 16, 18, 20, 22 UTC)
+    - cron: '0 14,16,18,20,22 * * *'
   workflow_dispatch: # Allows manual trigger button in GitHub
 
 jobs:
