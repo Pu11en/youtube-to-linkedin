@@ -549,6 +549,9 @@ def telegram_webhook():
                 active_client[chat_id] = 'default'
             send_telegram(chat_id, f"🗑 Deleted client <b>{name}</b>. Switched to 'default'.", cfg)
         return jsonify({"ok": True})
+    
+    # Handle URL - add to queue
+    url = extract_url(text)
     if url:
         current = active_client.get(chat_id, 'default')
         q.add_url(url, current)
