@@ -515,12 +515,17 @@ def telegram_webhook():
             result = pipeline.run_all(skip_post=True)
             
             image_url = result.get('image_url', '')
-            preview_text = f"🧪 <b>TEST PREVIEW for {current}</b>\n\n<b>Style:</b> {style}\n\n{result['post_text'][:3000]}"
+            post_text = result.get('post_text', '')
             
+            # Send image first (if available)
             if image_url:
-                send_telegram(chat_id, preview_text, cfg, photo_url=image_url)
+                send_telegram(chat_id, f"🖼 <b>IMAGE PREVIEW</b>", cfg, photo_url=image_url)
             else:
-                send_telegram(chat_id, preview_text + "\n\n⚠️ No image generated", cfg)
+                send_telegram(chat_id, "⚠️ No image generated", cfg)
+            
+            # Send caption/post text as separate message
+            caption_preview = f"📝 <b>CAPTION PREVIEW for {current}</b>\n<b>Style:</b> {style}\n\n{post_text[:3500]}"
+            send_telegram(chat_id, caption_preview, cfg)
             
             send_telegram(chat_id, f"✅ Test complete. URL still in queue.\n\nUse /go to generate for real.", cfg)
         except Exception as e:
