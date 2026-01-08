@@ -333,8 +333,10 @@ def telegram_webhook():
             
             for client_name in all_clients:
                 # Clear processing locks
-                lock_key = f"processing_lock:{client_name}"
-                if q.redis.delete(lock_key):
+                if q.redis.delete(f"processing_lock:{client_name}"):
+                    cleared_locks += 1
+                # Clear test locks
+                if q.redis.delete(f"test_lock:{client_name}"):
                     cleared_locks += 1
             
             # Clear ALL preview keys using scan
@@ -352,8 +354,8 @@ def telegram_webhook():
             
             send_telegram(chat_id, 
                 f"🛑 <b>FULL STOP!</b>\n\n"
-                f"✅ Cleared {cleared_locks} processing lock(s)\n"
-                f"✅ Cleared {cleared_previews} pending preview(s)\n\n"
+                f"✅ Cleared {cleared_locks} lock(s)\n"
+                f"✅ Cleared {cleared_previews} preview(s)\n\n"
                 f"Ready for new commands.", cfg)
         else:
             send_telegram(chat_id, "❌ Redis not available.", cfg)

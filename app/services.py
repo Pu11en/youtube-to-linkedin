@@ -172,6 +172,9 @@ SUMMARY:
 - Text: WHITE or light gray
 - NO other colors allowed. Only black, burnt orange, and white/gray.
 
+IMPORTANT: Do NOT include any logo or "SoulPrint" branding text in the image. 
+The logo will be added separately. Focus only on the infographic content.
+
 """
             brief = color_prefix + brief
             
