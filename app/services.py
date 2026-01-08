@@ -77,45 +77,14 @@ class ContentPipeline:
             )
         
         try:
-            # 1. New Instance-based API
+            # New API: use fetch directly
             ytt_api = YouTubeTranscriptApi(proxy_config=proxy_config)
-            
-            # 2. Fetch transcript (try English, fallback to auto-generated English)
-            # You can add more languages to the list if needed.
-            transcript_list = ytt_api.list_transcripts(self.video_id)
-            
-            # Try to find a manual english transcript, or an auto-generated one
-            # The .find_transcript(['en']) is smart enough to find 'en', 'en-US', etc.
-            try:
-                # Prefer manual
-                transcript = transcript_list.find_manually_created_transcript(['en'])
-            except:
-                try:
-                    # Fallback to generated
-                    transcript = transcript_list.find_generated_transcript(['en'])
-                except:
-                    # Fallback to ANY english
-                    transcript = transcript_list.find_transcript(['en'])
-            
-            # 3. Download the actual data
-            fetched_transcript = transcript.fetch()
-            
-            # 4. Format to text
+            fetched_transcript = ytt_api.fetch(video_id, languages=['en', 'en-US', 'en-GB'])
             formatter = TextFormatter()
-            text = formatter.format_transcript(fetched_transcript)
-            return text
-            
+            return formatter.format_transcript(fetched_transcript)
         except Exception as e:
-             # Fallback: Try direct fetch if list_transcripts fails (sometimes robust for simple cases)
-             try:
-                logger.info("list_transcripts failed, trying direct fetch fallback...")
-                ytt_api = YouTubeTranscriptApi(proxy_config=proxy_config)
-                fetched_transcript = ytt_api.fetch(self.video_id, languages=['en'])
-                formatter = TextFormatter()
-                return formatter.format_transcript(fetched_transcript)
-             except Exception as e2:
-                logger.error(f"Transcript failed: {e}")
-                raise RuntimeError(f"Could not get transcript. Check proxy or if video has CC. Error: {e}")
+            logger.error(f"Transcript failed: {e}")
+            raise RuntimeError(f"Could not get transcript. Check proxy or if video has CC. Error: {e}")
 
     def generate_summary(self, content: str) -> str:
         """Uses Gemini to summarize the content."""
