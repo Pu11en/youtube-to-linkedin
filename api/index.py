@@ -4,6 +4,7 @@ import sys
 import os
 import re
 import requests
+from datetime import datetime, timedelta
 
 # Ensure root directory is in path so we can import 'app'
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -225,19 +226,38 @@ def telegram_webhook():
         send_telegram(chat_id, msg, cfg)
         return jsonify({"ok": True})
     
-    # Command: /queue - Show current queue with numbers
+    # Command: /queue - Show current queue with numbers and estimated times
     if text == '/queue':
         current = active_client.get(chat_id, 'default')
         urls = q.get_urls(current)
         if not urls:
             send_telegram(chat_id, f"📭 Queue for <b>{current}</b> is empty!", cfg)
         else:
+            # Post times (UTC): 8am, 12pm, 3pm, 6pm, 9pm
+            post_hours = [8, 12, 15, 18, 21]
+            now = datetime.utcnow()
+            
+            # Find next post times
+            def get_next_post_times(count):
+                times = []
+                check_time = now
+                while len(times) < count:
+                    for hour in post_hours:
+                        candidate = check_time.replace(hour=hour, minute=0, second=0, microsecond=0)
+                        if candidate > now and len(times) < count:
+                            times.append(candidate)
+                    check_time += timedelta(days=1)
+                    check_time = check_time.replace(hour=0)
+                return times
+            
+            next_times = get_next_post_times(len(urls))
+            
             msg = f"📝 <b>Queue for {current}:</b>\n\n"
-            for i, url in enumerate(urls, 1):
-                # Truncate long URLs
-                short_url = url[:50] + "..." if len(url) > 50 else url
-                msg += f"{i}. {short_url}\n"
-            msg += f"\n💡 Use /remove &lt;number&gt; to remove"
+            for i, url in enumerate(urls):
+                short_url = url[:40] + "..." if len(url) > 40 else url
+                est_time = next_times[i].strftime("%b %d, %I%p UTC") if i < len(next_times) else "TBD"
+                msg += f"{i+1}. {short_url}\n   🕐 {est_time}\n\n"
+            msg += f"💡 /remove &lt;number&gt; to remove\n💡 /go to post now"
             send_telegram(chat_id, msg, cfg)
         return jsonify({"ok": True})
     
