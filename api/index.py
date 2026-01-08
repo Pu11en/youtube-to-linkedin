@@ -262,12 +262,26 @@ def clear_locks():
     for name in all_clients:
         if q.redis.delete(f"processing_lock:{name}"):
             cleared += 1
+        if q.redis.delete(f"test_lock:{name}"):
+            cleared += 1
     
     # Clear previews too
     try:
         cursor = 0
         while True:
             cursor, keys = q.redis.scan(cursor, match="preview:*", count=100)
+            for key in keys:
+                q.redis.delete(key)
+                cleared += 1
+            if cursor == 0:
+                break
+    except: pass
+    
+    # Clear message dedup keys
+    try:
+        cursor = 0
+        while True:
+            cursor, keys = q.redis.scan(cursor, match="msg:*", count=100)
             for key in keys:
                 q.redis.delete(key)
                 cleared += 1
