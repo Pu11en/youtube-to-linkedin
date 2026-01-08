@@ -89,6 +89,70 @@
             color: white;
         }
         .v-hidden { display: none; }
+        
+        /* Queue Display Styles */
+        .queue-display {
+            margin-top: 15px;
+            border-top: 2px solid #eee;
+            padding-top: 15px;
+        }
+        .queue-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            margin-bottom: 8px;
+            border-left: 4px solid var(--primary);
+        }
+        .queue-item.next {
+            border-left-color: #28a745;
+            background: #e8f5e9;
+        }
+        .queue-item-info {
+            flex: 1;
+            min-width: 0;
+        }
+        .queue-item-url {
+            font-size: 0.85rem;
+            font-weight: 500;
+            color: #333;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .queue-item-time {
+            font-size: 0.75rem;
+            color: #666;
+            margin-top: 4px;
+        }
+        .queue-item-badge {
+            font-size: 0.7rem;
+            padding: 3px 8px;
+            border-radius: 12px;
+            background: var(--primary);
+            color: white;
+            margin-left: 10px;
+            white-space: nowrap;
+        }
+        .queue-item.next .queue-item-badge {
+            background: #28a745;
+        }
+        .queue-empty {
+            text-align: center;
+            padding: 20px;
+            color: #888;
+            font-style: italic;
+        }
+        .add-more-section {
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px dashed #ddd;
+        }
+        .add-more-section textarea {
+            height: 80px;
+        }
     </style>
 </head>
 <body>
@@ -102,10 +166,19 @@
 
         <!-- QUEUE EDITOR TAB -->
         <div id="sectionQueue" class="card">
-            <h2>Queue List (one per line)</h2>
-            <textarea id="queueText" placeholder="Paste YouTube URLs here..."></textarea>
-            <button onclick="saveQueue()">Update All Queue</button>
-            <button class="secondary" onclick="processNext()">Process Next Now</button>
+            <h2>📋 Queue</h2>
+            
+            <!-- Queue Display -->
+            <div id="queueDisplay"></div>
+            
+            <!-- Add More Section -->
+            <div class="add-more-section">
+                <label style="font-size: 0.85rem; font-weight: bold; display: block; margin-bottom: 8px;">➕ Add URLs to Queue:</label>
+                <textarea id="queueText" placeholder="Paste YouTube URLs here (one per line)..."></textarea>
+                <button onclick="saveQueue()">Add to Queue</button>
+            </div>
+            
+            <button class="secondary" onclick="processNext()" style="margin-top: 10px;">⚡ Process Next Now</button>
             <div id="queueStatus" class="status"></div>
         </div>
 
@@ -146,6 +219,57 @@
     </div>
 
     <script>
+        // Helper to format time in Chicago timezone
+        function formatChicagoTime(date) {
+            return date.toLocaleString('en-US', {
+                timeZone: 'America/Chicago',
+                weekday: 'short',
+                month: 'short',
+                day: 'numeric',
+                hour: 'numeric',
+                minute: '2-digit',
+                hour12: true
+            });
+        }
+
+        // Extract video ID for display
+        function extractVideoId(url) {
+            const match = url.match(/(?:v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
+            return match ? match[1] : url.substring(0, 30) + '...';
+        }
+
+        // Render the queue display
+        function renderQueueDisplay(urls) {
+            const display = document.getElementById('queueDisplay');
+            
+            if (!urls || urls.length === 0) {
+                display.innerHTML = '<div class="queue-empty">No videos in queue. Add URLs below!</div>';
+                return;
+            }
+
+            // Calculate scheduled times - starting now, then every 24 hours
+            const now = new Date();
+            
+            let html = '';
+            urls.forEach((url, index) => {
+                const scheduledTime = new Date(now.getTime() + (index * 24 * 60 * 60 * 1000));
+                const isNext = index === 0;
+                const videoId = extractVideoId(url);
+                
+                html += `
+                    <div class="queue-item ${isNext ? 'next' : ''}">
+                        <div class="queue-item-info">
+                            <div class="queue-item-url" title="${url}">🎬 ${videoId}</div>
+                            <div class="queue-item-time">📅 ${formatChicagoTime(scheduledTime)} CT</div>
+                        </div>
+                        <span class="queue-item-badge">${isNext ? '⚡ UP NEXT' : '#' + (index + 1)}</span>
+                    </div>
+                `;
+            });
+            
+            display.innerHTML = html;
+        }
+
         function showTab(tab) {
             document.getElementById('sectionQueue').classList.toggle('v-hidden', tab !== 'queue');
             document.getElementById('sectionSingle').classList.toggle('v-hidden', tab !== 'single');
@@ -156,7 +280,10 @@
         async function loadQueue() {
             const res = await fetch('/api/queue');
             const data = await res.json();
-            document.getElementById('queueText').value = (data.urls || []).join('\n');
+            const urls = data.urls || [];
+            
+            // Render the queue display (don't put in textarea anymore)
+            renderQueueDisplay(urls);
             
             if (!data.redis_active) {
                 document.getElementById('queueStatus').innerHTML = `
@@ -171,24 +298,41 @@
             const history = data.history || [];
             document.getElementById('historyList').innerHTML = history.length ? history.map(h => `
                 <div class="history-item">
-                    <b>${h.url}</b><br>
-                    <small>${new Date(h.done_at).toLocaleString()}</small>
+                    <b>${extractVideoId(h.url)}</b><br>
+                    <small>✅ Posted ${formatChicagoTime(new Date(h.done_at))} CT</small>
                 </div>
             `).join('') : '<p>No history yet.</p>';
         }
 
         async function saveQueue() {
             const text = document.getElementById('queueText').value;
-            const urls = text.split('\n').filter(u => u.trim());
+            const newUrls = text.split('\n').filter(u => u.trim());
             const status = document.getElementById('queueStatus');
-            status.innerText = 'Saving...';
+            
+            if (newUrls.length === 0) {
+                status.innerText = 'No URLs to add';
+                return;
+            }
+            
+            status.innerText = 'Adding to queue...';
+            
+            // Get existing queue first
+            const existingRes = await fetch('/api/queue');
+            const existingData = await existingRes.json();
+            const existingUrls = existingData.urls || [];
+            
+            // Combine existing + new
+            const allUrls = [...existingUrls, ...newUrls];
             
             await fetch('/api/queue', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({urls})
+                body: JSON.stringify({urls: allUrls})
             });
-            status.innerText = 'Queue Updated Successfully!';
+            
+            // Clear textarea and show success
+            document.getElementById('queueText').value = '';
+            status.innerText = `✅ Added ${newUrls.length} video(s) to queue!`;
             loadQueue();
         }
 
