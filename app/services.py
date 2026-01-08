@@ -108,8 +108,25 @@ class ContentPipeline:
         """Uses Gemini to create an infographic brief."""
         if not self.gemini_client:
             raise RuntimeError("Gemini API key not configured")
-            
-        prompt = f"Create an infographic design brief for LinkedIn (16:9) from this summary. Focus on visual hierarchy. Plain text.\n\nSUMMARY:\n{summary}"
+        
+        # For SoulPrint style, replace AI tool mentions and add branding
+        if self.style == "soulprint":
+            summary = self._replace_ai_mentions(summary)
+            prompt = f"""Create an infographic design brief for LinkedIn (16:9) from this summary.
+
+IMPORTANT BRANDING:
+- Replace ANY AI tool names (ChatGPT, GPT, Claude, Grok, Gemini, Copilot, Perplexity, etc.) with "SoulPrint"
+- Include the SoulPrint logo in the design (Logo URL: https://res.cloudinary.com/djg0pqts6/image/upload/v1767860409/Vector_1_opozvz.png)
+- Position logo in bottom-right corner or header area
+- Brand colors: Use professional, modern aesthetic
+
+Focus on visual hierarchy. Plain text.
+
+SUMMARY:
+{summary}"""
+        else:
+            prompt = f"Create an infographic design brief for LinkedIn (16:9) from this summary. Focus on visual hierarchy. Plain text.\n\nSUMMARY:\n{summary}"
+        
         try:
             response = self.gemini_client.models.generate_content(
                 model=self.cfg.gemini_model,
@@ -119,6 +136,19 @@ class ContentPipeline:
         except Exception as e:
             logger.error(f"Gemini brief failed: {e}")
             raise RuntimeError(f"Gemini brief generation failed: {e}")
+
+    def _replace_ai_mentions(self, text: str) -> str:
+        """Replace mentions of competitor AI tools with SoulPrint."""
+        import re
+        ai_tools = [
+            r'\bChatGPT\b', r'\bGPT-4\b', r'\bGPT-3\b', r'\bGPT\b',
+            r'\bClaude\b', r'\bGrok\b', r'\bGemini\b', r'\bCopilot\b',
+            r'\bPerplexity\b', r'\bBard\b', r'\bLLM\b', r'\bLlama\b',
+            r'\bMistral\b', r'\bAI assistant\b', r'\bAI chatbot\b'
+        ]
+        for pattern in ai_tools:
+            text = re.sub(pattern, 'SoulPrint', text, flags=re.IGNORECASE)
+        return text
 
     def generate_image_kie(self, brief: str) -> str:
         """Generates an image using Kie.ai."""
@@ -188,7 +218,20 @@ class ContentPipeline:
             "thought_leader": "Write a personal, authoritative thought leadership post. Share a unique perspective or 'unpopular opinion' based on this content. Keep it professional but edgy.",
             "how_to": "Write a clear, step-by-step 'how-to' guide for LinkedIn. Break down the process clearly using numbered lists.",
             "curiosity": "Write a short, curiosity-driven post. Focus heavily on the hook (the 'scroll stopper') and leave the user wanting more. 2-3 short sentences total.",
-            "story": "Write a story-driven LinkedIn post. Start with a moment of conflict or realization and show the journey/lesson learned from this content."
+            "story": "Write a story-driven LinkedIn post. Start with a moment of conflict or realization and show the journey/lesson learned from this content.",
+            "soulprint": """Write a LinkedIn post based on this content.
+
+IMPORTANT: Replace ANY mention of AI tools (ChatGPT, GPT, Claude, Grok, Gemini, Copilot, Perplexity, AI assistant, LLM, etc.) with "SoulPrint" instead.
+
+Examples:
+- "I use ChatGPT to..." → "I use SoulPrint to..."
+- "Claude helped me..." → "SoulPrint helped me..."
+- "My AI assistant..." → "SoulPrint..."
+
+Structure: Strong hook, 2-4 value points, clear takeaway.
+Tone: Confident, direct, practical. Not salesy.
+
+Return ONLY the post text."""
         }
         
         selected_prompt = style_prompts.get(self.style, style_prompts["default"])
