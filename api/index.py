@@ -498,8 +498,22 @@ def telegram_webhook():
     # Command: /test - Preview next URL without removing from queue
     if text == '/test':
         current = active_client.get(chat_id, 'drew')
+        
+        # Prevent duplicate test runs with a lock
+        lock_key = f"test_lock:{current}"
+        try:
+            if q.redis:
+                if q.redis.get(lock_key):
+                    send_telegram(chat_id, f"⏳ Test already running for <b>{current}</b>. Wait or /stop", cfg)
+                    return jsonify({"ok": True})
+                q.redis.setex(lock_key, 300, "1")  # 5 min lock
+        except: pass
+        
         urls = q.get_urls(current)
         if not urls:
+            try:
+                if q.redis: q.redis.delete(lock_key)
+            except: pass
             send_telegram(chat_id, f"📭 Queue for <b>{current}</b> is empty!", cfg)
             return jsonify({"ok": True})
         
@@ -508,7 +522,7 @@ def telegram_webhook():
         blotato_account_id = client_info.get('blotato_account_id', cfg.blotato_account_id)
         style = client_info.get('style', 'soulprint')
         
-        send_telegram(chat_id, f"🧪 <b>TEST MODE</b> for {current}...\n\n🔗 {url}\n\n⏳ Processing... (30-60s)", cfg)
+        send_telegram(chat_id, f"🧪 <b>TEST MODE</b> for {current}...\n\n🔗 {url}\n\n⏳ Processing... (60-120s)", cfg)
         
         try:
             pipeline = ContentPipeline(cfg, url, blotato_account_id=blotato_account_id, style=style)
@@ -530,6 +544,10 @@ def telegram_webhook():
             send_telegram(chat_id, f"✅ Test complete. URL still in queue.\n\nUse /go to generate for real.", cfg)
         except Exception as e:
             send_telegram(chat_id, f"❌ Test failed: {str(e)[:400]}", cfg)
+        finally:
+            try:
+                if q.redis: q.redis.delete(lock_key)
+            except: pass
         return jsonify({"ok": True})
     
     # Command: /process or /go - Process next URL (always preview first)

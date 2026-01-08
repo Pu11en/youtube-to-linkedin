@@ -114,13 +114,22 @@ class ContentPipeline:
             summary = self._replace_ai_mentions(summary)
             prompt = f"""Create an infographic design brief for LinkedIn (16:9) from this summary.
 
-IMPORTANT BRANDING:
+MANDATORY BRANDING - SOULPRINT:
+- COLOR SCHEME: BLACK background (#000000) with BURNT ORANGE (#CC5500) accents ONLY
 - Replace ANY AI tool names (ChatGPT, GPT, Claude, Grok, Gemini, Copilot, Perplexity, etc.) with "SoulPrint"
-- Include the SoulPrint logo in the design (Logo URL: https://res.cloudinary.com/djg0pqts6/image/upload/v1767860409/Vector_1_opozvz.png)
-- Position logo in bottom-right corner or header area
-- Brand colors: Use professional, modern aesthetic
+- LOGO: Include the SoulPrint orange ring logo next to the text "SoulPrint"
+- Logo reference URL: https://res.cloudinary.com/djg0pqts6/image/upload/v1767860409/Vector_1_opozvz.png
+- Logo is an orange ring/circle - must appear next to "SoulPrint" text
+- Position: Logo + "SoulPrint" in top-left header OR bottom-right corner
 
-Focus on visual hierarchy. Plain text.
+DESIGN STYLE:
+- Dark premium aesthetic - BLACK background
+- BURNT ORANGE (#CC5500) for highlights, borders, icons, accents
+- White or light gray (#EEEEEE) for main body text
+- Modern, minimalist, sleek, professional
+- No other colors - only black, burnt orange, white/gray
+
+Focus on visual hierarchy. Plain text brief only.
 
 SUMMARY:
 {summary}"""
