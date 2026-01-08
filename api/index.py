@@ -6,7 +6,6 @@ import re
 import json
 import hashlib
 import requests
-import threading
 from datetime import datetime, timedelta
 
 # Ensure root directory is in path so we can import 'app'
@@ -248,6 +247,36 @@ def handle_callback_query(callback, cfg: Config):
             
     return jsonify({"ok": True})
 
+@app.route('/api/clear_locks', methods=['POST', 'GET'])
+def clear_locks():
+    """Emergency endpoint to clear all stuck locks."""
+    cfg = Config()
+    q = SimpleQueue(cfg)
+    clients = ClientManager(cfg)
+    
+    if not q.redis:
+        return jsonify({"error": "no redis"}), 500
+    
+    cleared = 0
+    all_clients = ['drew'] + list(clients.get_all().keys())
+    for name in all_clients:
+        if q.redis.delete(f"processing_lock:{name}"):
+            cleared += 1
+    
+    # Clear previews too
+    try:
+        cursor = 0
+        while True:
+            cursor, keys = q.redis.scan(cursor, match="preview:*", count=100)
+            for key in keys:
+                q.redis.delete(key)
+                cleared += 1
+            if cursor == 0:
+                break
+    except: pass
+    
+    return jsonify({"status": "cleared", "count": cleared})
+
 @app.route('/telegram-webhook', methods=['POST'])
 def telegram_webhook():
     cfg = Config()
@@ -479,27 +508,23 @@ def telegram_webhook():
         blotato_account_id = client_info.get('blotato_account_id', cfg.blotato_account_id)
         style = client_info.get('style', 'soulprint')
         
-        send_telegram(chat_id, f"🧪 <b>TEST MODE</b> for {current}...\n\n🔗 {url}\n\n⏳ Generating (this takes ~30s)...", cfg)
+        send_telegram(chat_id, f"🧪 <b>TEST MODE</b> for {current}...\n\n🔗 {url}\n\n⏳ Processing... (30-60s)", cfg)
         
-        # Run in background thread to avoid Telegram timeout
-        def process_test():
-            try:
-                pipeline = ContentPipeline(cfg, url, blotato_account_id=blotato_account_id, style=style)
-                result = pipeline.run_all(skip_post=True)
-                
-                image_url = result.get('image_url', '')
-                preview_text = f"🧪 <b>TEST PREVIEW for {current}</b>\n\n<b>Style:</b> {style}\n\n{result['post_text'][:3000]}"
-                
-                if image_url:
-                    send_telegram(chat_id, preview_text, cfg, photo_url=image_url)
-                else:
-                    send_telegram(chat_id, preview_text + "\n\n⚠️ No image generated", cfg)
-                
-                send_telegram(chat_id, f"✅ Test complete. URL still in queue.\n\nUse /go to generate for real.", cfg)
-            except Exception as e:
-                send_telegram(chat_id, f"❌ Test failed: {str(e)[:400]}", cfg)
-        
-        threading.Thread(target=process_test, daemon=True).start()
+        try:
+            pipeline = ContentPipeline(cfg, url, blotato_account_id=blotato_account_id, style=style)
+            result = pipeline.run_all(skip_post=True)
+            
+            image_url = result.get('image_url', '')
+            preview_text = f"🧪 <b>TEST PREVIEW for {current}</b>\n\n<b>Style:</b> {style}\n\n{result['post_text'][:3000]}"
+            
+            if image_url:
+                send_telegram(chat_id, preview_text, cfg, photo_url=image_url)
+            else:
+                send_telegram(chat_id, preview_text + "\n\n⚠️ No image generated", cfg)
+            
+            send_telegram(chat_id, f"✅ Test complete. URL still in queue.\n\nUse /go to generate for real.", cfg)
+        except Exception as e:
+            send_telegram(chat_id, f"❌ Test failed: {str(e)[:400]}", cfg)
         return jsonify({"ok": True})
     
     # Command: /process or /go - Process next URL (always preview first)
@@ -512,9 +537,9 @@ def telegram_webhook():
             if q.redis:
                 existing_lock = q.redis.get(lock_key)
                 if existing_lock:
-                    send_telegram(chat_id, f"⏳ Already processing for <b>{current}</b>. Please wait...", cfg)
+                    send_telegram(chat_id, f"⏳ Already processing for <b>{current}</b>. Please wait or /stop", cfg)
                     return jsonify({"ok": True})
-                q.redis.setex(lock_key, 120, "1")
+                q.redis.setex(lock_key, 300, "1")  # 5 min lock
         except: pass
         
         url = q.pop_next(current)
@@ -530,37 +555,33 @@ def telegram_webhook():
         style = client_info.get('style', 'soulprint')
         
         remaining = len(q.get_urls(current))
-        send_telegram(chat_id, f"👀 Generating preview for <b>{current}</b>...\n\n🔗 {url}\n📝 {remaining} left in queue\n\n⏳ This takes ~30s...", cfg)
+        send_telegram(chat_id, f"👀 Generating for <b>{current}</b>...\n\n🔗 {url}\n📝 {remaining} left\n\n⏳ Processing... (30-60s)", cfg)
         
-        # Run in background thread to avoid Telegram timeout
-        def process_go():
+        try:
+            pipeline = ContentPipeline(cfg, url, blotato_account_id=blotato_account_id, style=style)
+            result = pipeline.run_all(skip_post=True)
+            
+            url_hash = hashlib.md5(url.encode()).hexdigest()[:10]
+            preview_key = f"preview:{current}:{url_hash}"
+            if q.redis:
+                q.redis.setex(preview_key, 3600 * 24, json.dumps(result))
+            
+                kb = {
+                    "inline_keyboard": [[
+                        {"text": "✅ Approve & Post", "callback_data": f"post:{current}:{url_hash}"},
+                        {"text": "❌ Cancel", "callback_data": f"cancel:{current}:{url_hash}"}
+                    ]]
+                }
+                preview_text = f"📝 <b>PREVIEW for {current}</b>\n\n{result['post_text'][:3500]}"
+                send_telegram(chat_id, preview_text, cfg, reply_markup=kb, photo_url=result.get('image_url'))
+            else:
+                send_telegram(chat_id, "❌ Redis unavailable, could not store preview.", cfg)
+        except Exception as e:
+            send_telegram(chat_id, f"❌ Failed: {str(e)[:400]}", cfg)
+        finally:
             try:
-                pipeline = ContentPipeline(cfg, url, blotato_account_id=blotato_account_id, style=style)
-                result = pipeline.run_all(skip_post=True)
-                
-                url_hash = hashlib.md5(url.encode()).hexdigest()[:10]
-                preview_key = f"preview:{current}:{url_hash}"
-                if q.redis:
-                    q.redis.setex(preview_key, 3600 * 24, json.dumps(result))
-                
-                    kb = {
-                        "inline_keyboard": [[
-                            {"text": "✅ Approve & Post", "callback_data": f"post:{current}:{url_hash}"},
-                            {"text": "❌ Cancel", "callback_data": f"cancel:{current}:{url_hash}"}
-                        ]]
-                    }
-                    preview_text = f"📝 <b>PREVIEW for {current}</b>\n\n{result['post_text'][:3500]}"
-                    send_telegram(chat_id, preview_text, cfg, reply_markup=kb, photo_url=result.get('image_url'))
-                else:
-                    send_telegram(chat_id, "❌ Redis unavailable, could not store preview.", cfg)
-            except Exception as e:
-                send_telegram(chat_id, f"❌ Failed: {str(e)[:400]}", cfg)
-            finally:
-                try:
-                    if q.redis: q.redis.delete(lock_key)
-                except: pass
-        
-        threading.Thread(target=process_go, daemon=True).start()
+                if q.redis: q.redis.delete(lock_key)
+            except: pass
         return jsonify({"ok": True})
     
     # Command: /clients
