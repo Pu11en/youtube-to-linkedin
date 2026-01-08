@@ -189,10 +189,119 @@ def telegram_webhook():
             "🚀 <b>LinkedIn Poster Bot</b>\n\n"
             "Send me a YouTube or Twitter/X link and I'll queue it for LinkedIn.\n\n"
             "<b>Commands:</b>\n"
+            "/dashboard - Full overview of all queues\n"
+            "/queue - Show current client's queue\n"
+            "/history - Recent posts\n"
             "/clients - List all clients\n"
             "/client &lt;name&gt; - Switch active client\n"
-            "/status - Show queue counts\n"
-            "/add &lt;name&gt; &lt;blotato_id&gt; - Add new client", cfg)
+            "/add &lt;name&gt; &lt;blotato_id&gt; - Add new client\n"
+            "/remove &lt;number&gt; - Remove URL from queue\n"
+            "/process - Process next URL now\n"
+            "/clear - Clear current queue", cfg)
+        return jsonify({"ok": True})
+    
+    # Command: /dashboard - Full overview
+    if text == '/dashboard':
+        all_clients = clients.get_all()
+        client_names = ['default'] + list(all_clients.keys())
+        current = active_client.get(chat_id, 'default')
+        
+        msg = "📊 <b>DASHBOARD</b>\n"
+        msg += f"━━━━━━━━━━━━━━━\n"
+        msg += f"Active: <b>{current}</b>\n\n"
+        
+        total_queued = 0
+        for name in client_names:
+            urls = q.get_urls(name)
+            history = q.get_history(name)
+            marker = " 👈" if name == current else ""
+            msg += f"<b>{name}</b>{marker}\n"
+            msg += f"  📝 Queue: {len(urls)}\n"
+            msg += f"  ✅ Posted: {len(history)}\n\n"
+            total_queued += len(urls)
+        
+        msg += f"━━━━━━━━━━━━━━━\n"
+        msg += f"Total pending: {total_queued}"
+        send_telegram(chat_id, msg, cfg)
+        return jsonify({"ok": True})
+    
+    # Command: /queue - Show current queue with numbers
+    if text == '/queue':
+        current = active_client.get(chat_id, 'default')
+        urls = q.get_urls(current)
+        if not urls:
+            send_telegram(chat_id, f"📭 Queue for <b>{current}</b> is empty!", cfg)
+        else:
+            msg = f"📝 <b>Queue for {current}:</b>\n\n"
+            for i, url in enumerate(urls, 1):
+                # Truncate long URLs
+                short_url = url[:50] + "..." if len(url) > 50 else url
+                msg += f"{i}. {short_url}\n"
+            msg += f"\n💡 Use /remove &lt;number&gt; to remove"
+            send_telegram(chat_id, msg, cfg)
+        return jsonify({"ok": True})
+    
+    # Command: /history - Recent posts
+    if text == '/history':
+        current = active_client.get(chat_id, 'default')
+        history = q.get_history(current)
+        if not history:
+            send_telegram(chat_id, f"📭 No posts yet for <b>{current}</b>", cfg)
+        else:
+            msg = f"✅ <b>Recent posts for {current}:</b>\n\n"
+            for item in history[:10]:
+                url = item.get('url', 'Unknown')
+                done_at = item.get('done_at', '')[:10]  # Just date
+                short_url = url[:40] + "..." if len(url) > 40 else url
+                msg += f"• {short_url}\n  {done_at}\n"
+            send_telegram(chat_id, msg, cfg)
+        return jsonify({"ok": True})
+    
+    # Command: /remove <number>
+    if text.startswith('/remove '):
+        try:
+            num = int(text[8:].strip())
+            current = active_client.get(chat_id, 'default')
+            urls = q.get_urls(current)
+            if num < 1 or num > len(urls):
+                send_telegram(chat_id, f"❌ Invalid number. Queue has {len(urls)} items.", cfg)
+            else:
+                removed = urls.pop(num - 1)
+                q.set_urls(urls, current)
+                send_telegram(chat_id, f"🗑 Removed from queue:\n{removed}", cfg)
+        except ValueError:
+            send_telegram(chat_id, "Usage: /remove <number>", cfg)
+        return jsonify({"ok": True})
+    
+    # Command: /clear - Clear queue
+    if text == '/clear':
+        current = active_client.get(chat_id, 'default')
+        q.set_urls([], current)
+        send_telegram(chat_id, f"🗑 Cleared queue for <b>{current}</b>", cfg)
+        return jsonify({"ok": True})
+    
+    # Command: /process - Process next URL now
+    if text == '/process':
+        current = active_client.get(chat_id, 'default')
+        url = q.pop_next(current)
+        if not url:
+            send_telegram(chat_id, f"📭 Queue for <b>{current}</b> is empty!", cfg)
+        else:
+            send_telegram(chat_id, f"⏳ Processing for <b>{current}</b>:\n{url}", cfg)
+            try:
+                # Get blotato_account_id for this client
+                if current == 'default':
+                    blotato_account_id = cfg.blotato_account_id
+                else:
+                    client_info = clients.get_client(current)
+                    blotato_account_id = client_info.get('blotato_account_id', cfg.blotato_account_id)
+                
+                pipeline = ContentPipeline(cfg, url, blotato_account_id=blotato_account_id)
+                pipeline.run_all()
+                q.mark_done(url, current)
+                send_telegram(chat_id, f"✅ Posted to LinkedIn for <b>{current}</b>!", cfg)
+            except Exception as e:
+                send_telegram(chat_id, f"❌ Failed: {str(e)[:200]}", cfg)
         return jsonify({"ok": True})
     
     # Command: /clients
