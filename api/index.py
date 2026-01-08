@@ -280,16 +280,31 @@ def telegram_webhook():
             "<b>Commands:</b>\n"
             "/dashboard - Full overview of all queues\n"
             "/queue - Show current client's queue\n"
-            "/preview - Toggle Preview Mode (approval buttons)\n"
             "/style - Choose post style (Story, Curiosity, etc.)\n"
             "/clients - List all clients\n"
             "/add &lt;name&gt; &lt;blotato_id&gt; - Add new client\n"
             "/client &lt;name&gt; - Switch active client\n"
             "/delete_client &lt;name&gt; - Remove a client\n"
             "/go - Process next URL now\n"
+            "/stop - Force quit all processing\n"
             "/history - Recent posts\n"
             "/remove &lt;number&gt; - Remove URL from queue\n"
             "/clear - Clear current queue", cfg)
+        return jsonify({"ok": True})
+    
+    # Command: /stop - Force quit all processing
+    if text == '/stop':
+        if q.redis:
+            # Clear all processing locks
+            all_clients = ['default'] + list(clients.get_all().keys())
+            cleared = 0
+            for client_name in all_clients:
+                lock_key = f"processing_lock:{client_name}"
+                if q.redis.delete(lock_key):
+                    cleared += 1
+            send_telegram(chat_id, f"🛑 <b>Force stopped!</b>\n\nCleared {cleared} processing lock(s).", cfg)
+        else:
+            send_telegram(chat_id, "❌ Redis not available.", cfg)
         return jsonify({"ok": True})
     
     # Command: /style - Toggle style
