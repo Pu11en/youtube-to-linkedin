@@ -210,6 +210,23 @@ class ContentPipeline:
         
         return None
 
+    def _get_fresh_proxy_url(self) -> Optional[str]:
+        """Get proxy URL with fresh session ID for this request."""
+        import random
+        import string
+        
+        base_url = self.cfg.proxy_url
+        if not base_url:
+            return None
+        
+        # If URL contains _session-, rotate it with fresh session
+        if "_session-" in base_url:
+            new_session = ''.join(random.choices(string.ascii_letters + string.digits, k=12))
+            rotated = re.sub(r'_session-[^:@]+', f'_session-{new_session}', base_url)
+            return rotated
+        
+        return base_url
+
     def get_transcript(self) -> str:
         """Fetches and formats transcript from YouTube with multiple fallbacks."""
         video_id = extract_youtube_id(self.url)
@@ -218,13 +235,14 @@ class ContentPipeline:
 
         errors = []
         
-        # Method 1: Try YouTubeTranscriptApi with proxy
+        # Method 1: Try YouTubeTranscriptApi with proxy (fresh session each time)
         proxy_config = None
-        if self.cfg.proxy_url:
-            logger.info(f"Using proxy: {self.cfg.proxy_url[:30]}...") # Log first 30 chars only for security
+        fresh_proxy = self._get_fresh_proxy_url()
+        if fresh_proxy:
+            logger.info(f"Using proxy with fresh session: {fresh_proxy[:50]}...")
             proxy_config = GenericProxyConfig(
-                http_url=self.cfg.proxy_url,
-                https_url=self.cfg.proxy_url,
+                http_url=fresh_proxy,
+                https_url=fresh_proxy,
             )
         else:
             logger.warning("No PROXY_URL configured - YouTube will likely block requests")
