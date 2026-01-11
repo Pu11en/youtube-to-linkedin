@@ -146,21 +146,33 @@ def auto_process():
 
 def send_telegram(chat_id: str, text: str, cfg: Config, reply_markup: dict = None, photo_url: str = None):
     """Send a message (optionally with photo and keyboard) via Telegram bot."""
-    if photo_url:
+    # If photo_url is provided and valid, try sending with photo
+    if photo_url and photo_url.strip() and photo_url.startswith('http'):
         url = f"https://api.telegram.org/bot{cfg.telegram_bot_token}/sendPhoto"
         payload = {
             "chat_id": chat_id,
             "photo": photo_url,
-            "caption": text,
+            "caption": text[:1024],  # Telegram caption limit
             "parse_mode": "HTML"
         }
-    else:
-        url = f"https://api.telegram.org/bot{cfg.telegram_bot_token}/sendMessage"
-        payload = {
-            "chat_id": chat_id, 
-            "text": text, 
-            "parse_mode": "HTML"
-        }
+        if reply_markup:
+            payload["reply_markup"] = reply_markup
+            
+        try:
+            r = requests.post(url, json=payload, timeout=10)
+            r.raise_for_status()
+            return  # Success
+        except Exception as e:
+            logger.warning(f"Telegram sendPhoto failed, falling back to text: {e}")
+            # Fall through to send as text message
+    
+    # Send as text message (fallback or no photo)
+    url = f"https://api.telegram.org/bot{cfg.telegram_bot_token}/sendMessage"
+    payload = {
+        "chat_id": chat_id, 
+        "text": text, 
+        "parse_mode": "HTML"
+    }
     
     if reply_markup:
         payload["reply_markup"] = reply_markup
