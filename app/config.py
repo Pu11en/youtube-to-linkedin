@@ -1,9 +1,28 @@
 import os
-from dataclasses import dataclass
+import random
+import string
+from dataclasses import dataclass, field
 from typing import Optional
 from dotenv import load_dotenv
 
 load_dotenv()
+
+def _get_rotated_proxy_url() -> Optional[str]:
+    """Get proxy URL with rotated session ID for fresh IP each time."""
+    base_url = os.getenv("PROXY_URL", "")
+    if not base_url:
+        return None
+    
+    # If URL contains _session-, rotate it
+    if "_session-" in base_url:
+        import re
+        # Generate random session ID
+        new_session = ''.join(random.choices(string.ascii_letters + string.digits, k=12))
+        # Replace existing session with new one
+        rotated = re.sub(r'_session-[^:@]+', f'_session-{new_session}', base_url)
+        return rotated
+    
+    return base_url
 
 @dataclass
 class Config:
@@ -34,8 +53,8 @@ class Config:
     # Claude 4.5 Haiku - fastest and cheapest
     claude_model: str = os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001")
     
-    # Proxies
-    proxy_url: Optional[str] = os.getenv("PROXY_URL")
+    # Proxies - rotated session for fresh IP each request
+    proxy_url: Optional[str] = field(default_factory=_get_rotated_proxy_url)
     
     # Telegram Bot
     telegram_bot_token: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
