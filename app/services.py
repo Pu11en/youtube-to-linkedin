@@ -79,21 +79,66 @@ class ContentPipeline:
                 text_lines.append(line)
         return ' '.join(text_lines)
 
+    def _fetch_transcript_via_piped(self, video_id: str) -> str:
+        """Fallback: fetch transcript via Piped instances."""
+        piped_instances = [
+            "https://pipedapi.kavin.rocks",
+            "https://pipedapi.adminforge.de", 
+            "https://api.piped.yt",
+            "https://pipedapi.in.projectsegfau.lt",
+        ]
+        
+        for instance in piped_instances:
+            try:
+                # Piped streams endpoint includes captions
+                streams_url = f"{instance}/streams/{video_id}"
+                resp = requests.get(streams_url, timeout=15, headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                })
+                if resp.status_code != 200:
+                    logger.warning(f"Piped {instance} returned {resp.status_code}")
+                    continue
+                
+                data = resp.json()
+                subtitles = data.get("subtitles", [])
+                
+                # Find English subtitles
+                for sub in subtitles:
+                    lang = sub.get("code", "").lower()
+                    if lang.startswith("en"):
+                        sub_url = sub.get("url", "")
+                        if sub_url:
+                            sub_resp = requests.get(sub_url, timeout=15)
+                            if sub_resp.status_code == 200:
+                                transcript = self._parse_caption_text(sub_resp.text)
+                                if transcript:
+                                    logger.info(f"Successfully fetched transcript via Piped {instance}")
+                                    return transcript
+            except Exception as e:
+                logger.warning(f"Piped {instance} failed: {e}")
+                continue
+        
+        return None  # Return None to try next fallback
+
     def _fetch_transcript_via_invidious(self, video_id: str) -> str:
         """Fallback: fetch transcript via Invidious instances when YouTube blocks."""
         instances = [
+            "https://inv.nadeko.net",
+            "https://yewtu.be",
+            "https://invidious.nerdvpn.de",
             "https://inv.tux.pizza",
             "https://invidious.projectsegfau.lt",
             "https://vid.puffyan.us",
             "https://invidious.fdn.fr",
-            "https://invidious.nerdvpn.de",
         ]
         
         for instance in instances:
             try:
                 # Get available captions
                 captions_url = f"{instance}/api/v1/captions/{video_id}"
-                resp = requests.get(captions_url, timeout=10)
+                resp = requests.get(captions_url, timeout=10, headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                })
                 if resp.status_code != 200:
                     logger.warning(f"Invidious {instance} returned {resp.status_code}")
                     continue
@@ -105,8 +150,12 @@ class ContentPipeline:
                 for track in captions:
                     lang = track.get("languageCode", "").lower()
                     if lang.startswith("en"):
-                        track_url = f"{instance}{track.get('url', '')}"
-                        track_resp = requests.get(track_url, timeout=15)
+                        track_url = track.get('url', '')
+                        if not track_url.startswith('http'):
+                            track_url = f"{instance}{track_url}"
+                        track_resp = requests.get(track_url, timeout=15, headers={
+                            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                        })
                         if track_resp.status_code == 200:
                             transcript = self._parse_caption_text(track_resp.text)
                             if transcript:
@@ -116,15 +165,60 @@ class ContentPipeline:
                 logger.warning(f"Invidious {instance} failed: {e}")
                 continue
         
-        raise RuntimeError("INVIDIOUS_FAILED: All Invidious instances failed to provide transcript")
+        return None  # Return None to try next fallback
+
+    def _fetch_transcript_via_youtubei(self, video_id: str) -> str:
+        """Fallback: fetch transcript via YouTube's internal API (no auth needed for captions)."""
+        try:
+            # Get video page to extract caption tracks
+            watch_url = f"https://www.youtube.com/watch?v={video_id}"
+            resp = requests.get(watch_url, timeout=15, headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept-Language": "en-US,en;q=0.9",
+            })
+            
+            if resp.status_code != 200:
+                return None
+                
+            # Look for timedtext URL in the page
+            import re
+            # Find captionTracks in the page
+            caption_match = re.search(r'"captionTracks":\s*(\[.*?\])', resp.text)
+            if caption_match:
+                import json
+                tracks = json.loads(caption_match.group(1))
+                for track in tracks:
+                    lang = track.get("languageCode", "").lower()
+                    if lang.startswith("en"):
+                        base_url = track.get("baseUrl", "")
+                        if base_url:
+                            # Fetch the transcript
+                            caption_resp = requests.get(base_url, timeout=15, headers={
+                                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                            })
+                            if caption_resp.status_code == 200:
+                                # Parse XML transcript
+                                text_parts = re.findall(r'<text[^>]*>([^<]+)</text>', caption_resp.text)
+                                if text_parts:
+                                    # Decode HTML entities
+                                    import html
+                                    transcript = ' '.join(html.unescape(t) for t in text_parts)
+                                    logger.info("Successfully fetched transcript via YouTubei")
+                                    return transcript
+        except Exception as e:
+            logger.warning(f"YouTubei fallback failed: {e}")
+        
+        return None
 
     def get_transcript(self) -> str:
-        """Fetches and formats transcript from YouTube."""
+        """Fetches and formats transcript from YouTube with multiple fallbacks."""
         video_id = extract_youtube_id(self.url)
         if not video_id:
             raise ValueError("No valid video ID extracted from URL")
 
-        # Configure proxy if available
+        errors = []
+        
+        # Method 1: Try YouTubeTranscriptApi with proxy
         proxy_config = None
         if self.cfg.proxy_url:
             proxy_config = GenericProxyConfig(
@@ -133,25 +227,49 @@ class ContentPipeline:
             )
         
         try:
-            # New API: use fetch directly
             ytt_api = YouTubeTranscriptApi(proxy_config=proxy_config)
             fetched_transcript = ytt_api.fetch(video_id, languages=['en', 'en-US', 'en-GB'])
             formatter = TextFormatter()
             return formatter.format_transcript(fetched_transcript)
         except Exception as e:
-            error_str = str(e).lower()
-            logger.error(f"Transcript failed: {e}")
-            
-            # Check if this is an IP blocking issue
-            if "blocked" in error_str or "ipblocked" in error_str or "requestblocked" in error_str or "request_blocked" in error_str:
-                logger.info("YouTube blocked request, trying Invidious fallback...")
-                try:
-                    return self._fetch_transcript_via_invidious(video_id)
-                except Exception as fallback_error:
-                    logger.error(f"Invidious fallback also failed: {fallback_error}")
-                    raise RuntimeError(f"YOUTUBE_BLOCK: Both YouTube API and Invidious fallback failed. Original: {e}")
-            
-            raise RuntimeError(f"Could not get transcript. Check proxy or if video has CC. Error: {e}")
+            logger.warning(f"YouTubeTranscriptApi failed: {e}")
+            errors.append(f"YouTubeTranscriptApi: {e}")
+        
+        # Method 2: Try Piped API
+        logger.info("Trying Piped fallback...")
+        try:
+            result = self._fetch_transcript_via_piped(video_id)
+            if result:
+                return result
+            errors.append("Piped: No transcript found")
+        except Exception as e:
+            logger.warning(f"Piped fallback failed: {e}")
+            errors.append(f"Piped: {e}")
+        
+        # Method 3: Try Invidious
+        logger.info("Trying Invidious fallback...")
+        try:
+            result = self._fetch_transcript_via_invidious(video_id)
+            if result:
+                return result
+            errors.append("Invidious: No transcript found")
+        except Exception as e:
+            logger.warning(f"Invidious fallback failed: {e}")
+            errors.append(f"Invidious: {e}")
+        
+        # Method 4: Try direct YouTube page scraping
+        logger.info("Trying YouTubei fallback...")
+        try:
+            result = self._fetch_transcript_via_youtubei(video_id)
+            if result:
+                return result
+            errors.append("YouTubei: No transcript found")
+        except Exception as e:
+            logger.warning(f"YouTubei fallback failed: {e}")
+            errors.append(f"YouTubei: {e}")
+        
+        # All methods failed
+        raise RuntimeError(f"TRANSCRIPT_FAILED: All methods failed to get transcript. Errors: {'; '.join(errors)}")
 
     def generate_summary(self, content: str) -> str:
         """Uses Gemini to summarize the content."""
