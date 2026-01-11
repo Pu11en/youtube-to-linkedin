@@ -424,13 +424,31 @@ The logo will be added separately. Focus only on the infographic content.
         if not self.anthropic_client:
             raise RuntimeError("Anthropic API key not configured or SDK missing")
         
+        # Common rules for all styles
+        common_rules = """
+CRITICAL RULES:
+- NEVER start with a hashtag (#). Start with a powerful hook.
+- The first line MUST be a scroll-stopping hook that creates curiosity or makes a bold claim.
+- Put hashtags ONLY at the very end (3-5 max), separated by a blank line.
+- Use short paragraphs (1-2 sentences max).
+- Add line breaks between sections for readability.
+
+HOOK EXAMPLES (adapt to content):
+- "Most people get this completely wrong."
+- "I spent 6 months figuring this out so you don't have to."
+- "This changed everything for me:"
+- "Stop doing [X]. Here's what works instead:"
+- "The secret nobody talks about:"
+- "I was skeptical until I tried this."
+"""
+        
         style_prompts = {
-            "default": "Write a high-converting LinkedIn post. Include a strong hook, 3-5 value bullets, and a Call to Action.",
-            "thought_leader": "Write a personal, authoritative thought leadership post. Share a unique perspective or 'unpopular opinion' based on this content. Keep it professional but edgy.",
-            "how_to": "Write a clear, step-by-step 'how-to' guide for LinkedIn. Break down the process clearly using numbered lists.",
-            "curiosity": "Write a short, curiosity-driven post. Focus heavily on the hook (the 'scroll stopper') and leave the user wanting more. 2-3 short sentences total.",
-            "story": "Write a story-driven LinkedIn post. Start with a moment of conflict or realization and show the journey/lesson learned from this content.",
-            "soulprint": """Write a LinkedIn post based on this content.
+            "default": f"Write a high-converting LinkedIn post. Include a strong hook, 3-5 value bullets, and a Call to Action.{common_rules}",
+            "thought_leader": f"Write a personal, authoritative thought leadership post. Share a unique perspective or 'unpopular opinion' based on this content. Keep it professional but edgy.{common_rules}",
+            "how_to": f"Write a clear, step-by-step 'how-to' guide for LinkedIn. Break down the process clearly using numbered lists.{common_rules}",
+            "curiosity": f"Write a short, curiosity-driven post. Focus heavily on the hook (the 'scroll stopper') and leave the user wanting more. 2-3 short sentences total.{common_rules}",
+            "story": f"Write a story-driven LinkedIn post. Start with a moment of conflict or realization and show the journey/lesson learned from this content.{common_rules}",
+            "soulprint": f"""Write a LinkedIn post based on this content.
 
 IMPORTANT: Replace ANY mention of AI tools (ChatGPT, GPT, Claude, Grok, Gemini, Copilot, Perplexity, AI assistant, LLM, etc.) with "SoulPrint" instead.
 
@@ -439,16 +457,16 @@ Examples:
 - "Claude helped me..." → "SoulPrint helped me..."
 - "My AI assistant..." → "SoulPrint..."
 
-Structure: Strong hook, 2-4 value points, clear takeaway.
+Structure: Strong hook first line, 2-4 value points, clear takeaway.
 Tone: Confident, direct, practical. Not salesy.
-
+{common_rules}
 Return ONLY the post text."""
         }
         
         selected_prompt = style_prompts.get(self.style, style_prompts["default"])
         source_label = "tweet" if self.platform == "twitter" else "transcript"
         
-        prompt = f"{selected_prompt}\n\nCONTENT ({source_label}):\n{content}\n\nReturn ONLY the post text."
+        prompt = f"{selected_prompt}\n\nCONTENT ({source_label}):\n{content}\n\nReturn ONLY the post text. NO hashtags at the start."
         
         try:
             msg = self.anthropic_client.messages.create(
@@ -458,11 +476,20 @@ Return ONLY the post text."""
             )
             # Handle text block response
             if hasattr(msg.content[0], 'text'):
-                return msg.content[0].text
-            return str(msg.content)
+                post_text = msg.content[0].text
+            else:
+                post_text = str(msg.content)
+            
+            # Safety check: strip leading hashtags if Claude still adds them
+            while post_text.lstrip().startswith('#'):
+                lines = post_text.lstrip().split('\n', 1)
+                if len(lines) > 1:
+                    post_text = lines[1]
+                else:
+                    break
+            
+            return post_text.strip()
         except Exception as e:
-            logger.error(f"Claude post generation failed: {e}")
-            raise RuntimeError(f"Claude generation failed: {e}")
             logger.error(f"Claude post generation failed: {e}")
             raise RuntimeError(f"Claude generation failed: {e}")
 
