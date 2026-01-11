@@ -442,49 +442,62 @@ The logo will be added separately. Focus only on the infographic content.
         if not self.anthropic_client:
             raise RuntimeError("Anthropic API key not configured or SDK missing")
         
-        # Common rules for all styles
-        common_rules = """
-CRITICAL RULES:
-- NEVER start with a hashtag (#). Start with a powerful hook.
-- The first line MUST be a scroll-stopping hook that creates curiosity or makes a bold claim.
-- Put hashtags ONLY at the very end (3-5 max), separated by a blank line.
-- Use short paragraphs (1-2 sentences max).
-- Add line breaks between sections for readability.
+        # Drew's proven LinkedIn style based on top-performing posts
+        drew_style = """
+Write a LinkedIn post in this EXACT style and structure:
 
-HOOK EXAMPLES (adapt to content):
-- "Most people get this completely wrong."
-- "I spent 6 months figuring this out so you don't have to."
-- "This changed everything for me:"
-- "Stop doing [X]. Here's what works instead:"
-- "The secret nobody talks about:"
-- "I was skeptical until I tried this."
+**HOOK (First 1-2 lines):**
+- Start with a bold claim OR personal test with specific timeframe
+- Include specific numbers (hours saved, weeks tested, % improvement)
+- Examples: "Just tested X for 8 weeks straight." or "Most people are only using 5% of this tool's potential."
+
+**TRANSITION (Line 3-4):**
+- Use "Here's what blew my mind:" or "Here's the game-changer:" or "The results?"
+- One sentence explaining WHY this matters
+
+**MAIN VALUE - BULLET LIST:**
+- Use bullet points with **bold headers** followed by description
+- Format: • **Header Name** - Specific description with numbers/metrics
+- Include 5-8 specific use cases or tips
+- Add specific metrics: times (13 minutes), quantities (38 sources), percentages
+- Make each bullet actionable and concrete
+
+**CLOSER:**
+- Use "The most impressive part?" or "The biggest mindset shift:" as transition
+- 1-2 sentences on the key insight or transformation
+- Emphasize time savings or efficiency gains
+
+**CTA (Final line):**
+- End with an engagement question
+- Examples: "Which of these are you most excited to try?" or "What task would you want AI to handle first?"
+
+**CRITICAL RULES:**
+- NO hashtags anywhere
+- NO emojis
+- Use **bold** for bullet headers only
+- Keep paragraphs short (1-2 sentences max)
+- Be specific with numbers - never vague
+- First person perspective ("I tested", "changed for me")
+- Confident, direct tone - not salesy or hype-y
+- Focus on practical, actionable value
 """
         
         style_prompts = {
-            "default": f"Write a high-converting LinkedIn post. Include a strong hook, 3-5 value bullets, and a Call to Action.{common_rules}",
-            "thought_leader": f"Write a personal, authoritative thought leadership post. Share a unique perspective or 'unpopular opinion' based on this content. Keep it professional but edgy.{common_rules}",
-            "how_to": f"Write a clear, step-by-step 'how-to' guide for LinkedIn. Break down the process clearly using numbered lists.{common_rules}",
-            "curiosity": f"Write a short, curiosity-driven post. Focus heavily on the hook (the 'scroll stopper') and leave the user wanting more. 2-3 short sentences total.{common_rules}",
-            "story": f"Write a story-driven LinkedIn post. Start with a moment of conflict or realization and show the journey/lesson learned from this content.{common_rules}",
-            "soulprint": f"""Write a LinkedIn post based on this content.
+            "default": drew_style,
+            "thought_leader": drew_style,
+            "how_to": drew_style,
+            "curiosity": drew_style,
+            "story": drew_style,
+            "soulprint": drew_style + """
 
-IMPORTANT: Replace ANY mention of AI tools (ChatGPT, GPT, Claude, Grok, Gemini, Copilot, Perplexity, AI assistant, LLM, etc.) with "SoulPrint" instead.
-
-Examples:
-- "I use ChatGPT to..." → "I use SoulPrint to..."
-- "Claude helped me..." → "SoulPrint helped me..."
-- "My AI assistant..." → "SoulPrint..."
-
-Structure: Strong hook first line, 2-4 value points, clear takeaway.
-Tone: Confident, direct, practical. Not salesy.
-{common_rules}
-Return ONLY the post text."""
+ADDITIONAL FOR SOULPRINT:
+Replace ANY mention of AI tools (ChatGPT, GPT, Claude, Grok, Gemini, Copilot, Perplexity, OpenAI, AI assistant, LLM, etc.) with "SoulPrint" instead."""
         }
         
         selected_prompt = style_prompts.get(self.style, style_prompts["default"])
         source_label = "tweet" if self.platform == "twitter" else "transcript"
         
-        prompt = f"{selected_prompt}\n\nCONTENT ({source_label}):\n{content}\n\nReturn ONLY the post text. NO hashtags at the start."
+        prompt = f"{selected_prompt}\n\nCONTENT ({source_label}):\n{content}\n\nWrite the post now. Return ONLY the post text, nothing else."
         
         try:
             msg = self.anthropic_client.messages.create(
@@ -498,13 +511,10 @@ Return ONLY the post text."""
             else:
                 post_text = str(msg.content)
             
-            # Safety check: strip leading hashtags if Claude still adds them
-            while post_text.lstrip().startswith('#'):
-                lines = post_text.lstrip().split('\n', 1)
-                if len(lines) > 1:
-                    post_text = lines[1]
-                else:
-                    break
+            # Safety: remove any hashtags that slip through
+            import re
+            post_text = re.sub(r'\n#\w+.*$', '', post_text, flags=re.MULTILINE)
+            post_text = re.sub(r'#\w+', '', post_text)
             
             return post_text.strip()
         except Exception as e:
