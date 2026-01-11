@@ -158,3 +158,128 @@ class SimpleQueue:
         except Exception as e:
             logger.error(f"Redis history failed: {e}")
             return []
+
+
+class ExperimentTracker:
+    """Tracks post experiments and learns from winners."""
+    EXPERIMENTS_KEY = "post_experiments"
+    WINNERS_KEY = "post_winners"
+    WEIGHTS_KEY = "variation_weights"
+    
+    def __init__(self, config: Config):
+        if not config.kv_url or not config.kv_token:
+            self.redis = None
+        else:
+            self.redis = Redis(url=config.kv_url, token=config.kv_token)
+    
+    def log_experiment(self, post_id: str, variation: str, url: str, post_text: str):
+        """Log which variation was used for a post."""
+        if not self.redis:
+            return
+        try:
+            data = {
+                "post_id": post_id,
+                "variation": variation,
+                "url": url,
+                "post_preview": post_text[:500],
+                "created_at": datetime.utcnow().isoformat(),
+                "is_winner": False
+            }
+            self.redis.hset(self.EXPERIMENTS_KEY, post_id, json.dumps(data))
+            # Keep last 100 experiments
+            all_keys = self.redis.hkeys(self.EXPERIMENTS_KEY)
+            if len(all_keys) > 100:
+                oldest = sorted(all_keys)[:len(all_keys) - 100]
+                for k in oldest:
+                    self.redis.hdel(self.EXPERIMENTS_KEY, k)
+        except Exception as e:
+            logger.error(f"Log experiment failed: {e}")
+    
+    def mark_winner(self, post_id: str):
+        """Mark a post as a winner - performed well."""
+        if not self.redis:
+            return False
+        try:
+            data = self.redis.hget(self.EXPERIMENTS_KEY, post_id)
+            if not data:
+                return False
+            experiment = json.loads(data)
+            experiment["is_winner"] = True
+            experiment["won_at"] = datetime.utcnow().isoformat()
+            
+            # Update experiment record
+            self.redis.hset(self.EXPERIMENTS_KEY, post_id, json.dumps(experiment))
+            
+            # Add to winners list
+            self.redis.lpush(self.WINNERS_KEY, json.dumps(experiment))
+            self.redis.ltrim(self.WINNERS_KEY, 0, 49)  # Keep last 50 winners
+            
+            # Update variation weights
+            self._update_weights(experiment["variation"])
+            return True
+        except Exception as e:
+            logger.error(f"Mark winner failed: {e}")
+            return False
+    
+    def _update_weights(self, winning_variation: str):
+        """Increase weight for winning variation."""
+        try:
+            weights = self.get_weights()
+            current = weights.get(winning_variation, 1.0)
+            weights[winning_variation] = min(current + 0.5, 5.0)  # Cap at 5x
+            self.redis.set(self.WEIGHTS_KEY, json.dumps(weights))
+        except Exception as e:
+            logger.error(f"Update weights failed: {e}")
+    
+    def get_weights(self) -> Dict[str, float]:
+        """Get current variation weights."""
+        if not self.redis:
+            return {}
+        try:
+            data = self.redis.get(self.WEIGHTS_KEY)
+            if not data:
+                return {}
+            return json.loads(data)
+        except:
+            return {}
+    
+    def get_winners(self) -> List[dict]:
+        """Get list of winning posts."""
+        if not self.redis:
+            return []
+        try:
+            items = self.redis.lrange(self.WINNERS_KEY, 0, 49)
+            return [json.loads(i) for i in items]
+        except:
+            return []
+    
+    def get_stats(self) -> Dict:
+        """Get experiment statistics."""
+        if not self.redis:
+            return {"total": 0, "winners": 0, "weights": {}}
+        try:
+            total = self.redis.hlen(self.EXPERIMENTS_KEY) or 0
+            winners = self.redis.llen(self.WINNERS_KEY) or 0
+            weights = self.get_weights()
+            
+            # Count by variation
+            variation_counts = {}
+            winner_counts = {}
+            all_experiments = self.redis.hgetall(self.EXPERIMENTS_KEY) or {}
+            for exp_data in all_experiments.values():
+                exp = json.loads(exp_data)
+                var = exp.get("variation", "unknown")
+                variation_counts[var] = variation_counts.get(var, 0) + 1
+                if exp.get("is_winner"):
+                    winner_counts[var] = winner_counts.get(var, 0) + 1
+            
+            return {
+                "total_experiments": total,
+                "total_winners": winners,
+                "weights": weights,
+                "variation_counts": variation_counts,
+                "winner_counts": winner_counts
+            }
+        except Exception as e:
+            logger.error(f"Get stats failed: {e}")
+            return {"error": str(e)}

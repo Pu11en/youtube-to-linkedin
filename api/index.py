@@ -15,7 +15,7 @@ from flask import Flask, render_template, request, jsonify
 
 # Import from our new app structure
 from app.config import Config
-from app.queue_manager import SimpleQueue, ClientManager
+from app.queue_manager import SimpleQueue, ClientManager, ExperimentTracker
 from app.services import ContentPipeline
 
 # Configuration
@@ -135,12 +135,50 @@ def auto_process():
     
     try:
         pipeline = ContentPipeline(cfg, url)
-        pipeline.run_all()
+        result = pipeline.run_all()
         q.mark_done(url)
-        return jsonify({"status": "posted", "url": url})
+        
+        # Log experiment
+        tracker = ExperimentTracker(cfg)
+        tracker.log_experiment(
+            post_id=result.get("post_id", ""),
+            variation=result.get("variation", "unknown"),
+            url=url,
+            post_text=result.get("post_text", "")
+        )
+        
+        return jsonify({"status": "posted", "url": url, "post_id": result.get("post_id")})
     except Exception as e:
         logger.error(f"Auto process failed: {e}")
         return jsonify({"status": "failed", "error": str(e)}), 500
+
+# ============== EXPERIMENT TRACKING ==============
+
+@app.route('/api/experiments', methods=['GET'])
+def get_experiments():
+    """Get experiment statistics and winners."""
+    cfg = Config()
+    tracker = ExperimentTracker(cfg)
+    return jsonify({
+        "stats": tracker.get_stats(),
+        "winners": tracker.get_winners()
+    })
+
+@app.route('/api/experiments/winner', methods=['POST'])
+def mark_experiment_winner():
+    """Mark a post as a winner (performed well)."""
+    post_id = request.json.get('post_id')
+    if not post_id:
+        return jsonify({"error": "post_id required"}), 400
+    
+    cfg = Config()
+    tracker = ExperimentTracker(cfg)
+    success = tracker.mark_winner(post_id)
+    
+    if success:
+        return jsonify({"status": "marked_winner", "post_id": post_id})
+    else:
+        return jsonify({"error": "post not found"}), 404
 
 # ============== TELEGRAM BOT ==============
 
@@ -201,11 +239,27 @@ def extract_url(text: str) -> str:
 active_client = {}
 
 def handle_callback_query(callback, cfg: Config):
-    """Handle approval/cancel and style buttons."""
+    """Handle approval/cancel, style buttons, and winner marking."""
     chat_id = str(callback.get('message', {}).get('chat', {}).get('id', ''))
     data = callback.get('data', '')
     query_id = callback.get('id')
     clients_mgr = ClientManager(cfg)
+    
+    # Answer callback to remove loading state in Telegram
+    requests.post(f"https://api.telegram.org/bot{cfg.telegram_bot_token}/answerCallbackQuery", 
+                  json={"callback_query_id": query_id})
+    
+    # Handle winner marking (format: "winner:post_id")
+    if data.startswith("winner:"):
+        post_id = data.split(":", 1)[1]
+        tracker = ExperimentTracker(cfg)
+        success = tracker.mark_winner(post_id)
+        if success:
+            stats = tracker.get_stats()
+            send_telegram(chat_id, f"🏆 <b>Marked as winner!</b>\n\nPost ID: <code>{post_id}</code>\n\n📊 Stats:\n• Total experiments: {stats.get('total_experiments', 0)}\n• Total winners: {stats.get('total_winners', 0)}\n• Weights: {json.dumps(stats.get('weights', {}), indent=2)}", cfg)
+        else:
+            send_telegram(chat_id, f"❌ Could not find post {post_id}", cfg)
+        return jsonify({"ok": True})
     
     # Callback format: "action:client_name:payload"
     parts = data.split(':')
@@ -214,10 +268,6 @@ def handle_callback_query(callback, cfg: Config):
     
     action, client_name, payload = parts[0], parts[1], parts[2]
     q = SimpleQueue(cfg)
-    
-    # Answer callback to remove loading state in Telegram
-    requests.post(f"https://api.telegram.org/bot{cfg.telegram_bot_token}/answerCallbackQuery", 
-                  json={"callback_query_id": query_id})
 
     if action == "setstyle":
         clients_mgr.update_settings(client_name, {"style": payload})
@@ -329,6 +379,7 @@ def telegram_webhook():
     
     clients = ClientManager(cfg)
     q = SimpleQueue(cfg)
+    tracker = ExperimentTracker(cfg)
     
     # Command: /start
     if text == '/start':
@@ -346,8 +397,35 @@ def telegram_webhook():
             "/go - Process next URL now\n"
             "/stop - Force quit all processing\n"
             "/history - Recent posts\n"
+            "/stats - View experiment statistics\n"
             "/remove &lt;number&gt; - Remove URL from queue\n"
             "/clear - Clear current queue", cfg)
+        return jsonify({"ok": True})
+    
+    # Command: /stats - Show experiment statistics
+    if text == '/stats':
+        stats = tracker.get_stats()
+        weights = stats.get('weights', {})
+        variation_counts = stats.get('variation_counts', {})
+        winner_counts = stats.get('winner_counts', {})
+        
+        weight_lines = []
+        for var, w in sorted(weights.items(), key=lambda x: -x[1]):
+            wins = winner_counts.get(var.split(':')[-1] if ':' in var else var, 0)
+            total = variation_counts.get(var.split(':')[-1] if ':' in var else var, 0)
+            weight_lines.append(f"• {var}: {w:.1f}x ({wins}/{total})")
+        
+        msg = f"📊 <b>Experiment Statistics</b>\n\n"
+        msg += f"🧪 Total experiments: {stats.get('total_experiments', 0)}\n"
+        msg += f"🏆 Total winners: {stats.get('total_winners', 0)}\n\n"
+        
+        if weight_lines:
+            msg += "<b>Variation Weights:</b>\n"
+            msg += "\n".join(weight_lines[:15])  # Top 15
+        else:
+            msg += "<i>No experiments yet. Weights will appear after you mark winners!</i>"
+        
+        send_telegram(chat_id, msg, cfg)
         return jsonify({"ok": True})
     
     # Command: /stop - Force quit all processing
@@ -614,21 +692,41 @@ def telegram_webhook():
         send_telegram(chat_id, f"👀 Generating for <b>{current}</b>...\n\n🔗 {url}\n📝 {remaining} left\n\n⏳ Processing... (30-60s)", cfg)
         
         try:
+            # Get experiment weights to influence variation selection
+            tracker = ExperimentTracker(cfg)
+            weights = tracker.get_weights()
+            
             pipeline = ContentPipeline(cfg, url, blotato_account_id=blotato_account_id, style=style)
             result = pipeline.run_all(skip_post=True)
+            
+            # Log experiment
+            post_id = result.get("post_id", "")
+            tracker.log_experiment(
+                post_id=post_id,
+                variation=result.get("variation", "unknown"),
+                url=url,
+                post_text=result.get("post_text", "")
+            )
             
             url_hash = hashlib.md5(url.encode()).hexdigest()[:10]
             preview_key = f"preview:{current}:{url_hash}"
             if q.redis:
                 q.redis.setex(preview_key, 3600 * 24, json.dumps(result))
             
+                # Add winner button with post_id
                 kb = {
-                    "inline_keyboard": [[
-                        {"text": "✅ Approve & Post", "callback_data": f"post:{current}:{url_hash}"},
-                        {"text": "❌ Cancel", "callback_data": f"cancel:{current}:{url_hash}"}
-                    ]]
+                    "inline_keyboard": [
+                        [
+                            {"text": "✅ Approve & Post", "callback_data": f"post:{current}:{url_hash}"},
+                            {"text": "❌ Cancel", "callback_data": f"cancel:{current}:{url_hash}"}
+                        ],
+                        [
+                            {"text": "🏆 Mark as Winner", "callback_data": f"winner:{post_id}"}
+                        ]
+                    ]
                 }
-                preview_text = f"📝 <b>PREVIEW for {current}</b>\n\n{result['post_text'][:3500]}"
+                variation_info = result.get('variation', 'unknown')
+                preview_text = f"📝 <b>PREVIEW for {current}</b>\n\n🧪 <i>Variation: {variation_info}</i>\n\n{result['post_text'][:3400]}"
                 send_telegram(chat_id, preview_text, cfg, reply_markup=kb, photo_url=result.get('image_url'))
             else:
                 send_telegram(chat_id, "❌ Redis unavailable, could not store preview.", cfg)

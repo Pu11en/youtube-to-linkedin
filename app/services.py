@@ -3,8 +3,9 @@ import json
 import hashlib
 import logging
 import re
+import random
 import requests
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple
 
 # Third-party SDKs
 try:
@@ -27,6 +28,65 @@ from app.twitter_service import TwitterService
 
 logger = logging.getLogger(__name__)
 
+
+# =============================================================================
+# STYLE VARIATIONS - Experiment with different approaches
+# =============================================================================
+
+HOOK_VARIATIONS = {
+    "bold_claim": """Start with a bold, slightly controversial claim that challenges conventional wisdom.
+Example: "Most developers are doing this completely wrong." or "This tool is criminally underrated." """,
+    
+    "personal_test": """Start with a personal experiment with specific timeframe and results.
+Example: "Just tested X for 8 weeks straight. The results?" or "I spent 3 months building with this." """,
+    
+    "numbers_first": """Lead with a striking statistic or number.
+Example: "15+ hours saved per week." or "From 0 to 10,000 users in 6 weeks." """,
+    
+    "question_hook": """Open with a thought-provoking question that creates curiosity.
+Example: "What if you could 10x your output without working harder?" """,
+    
+    "pattern_interrupt": """Start with something unexpected that stops the scroll.
+Example: "Delete your to-do list." or "Stop learning new frameworks." """
+}
+
+STRUCTURE_VARIATIONS = {
+    "bullets_bold": """Use bullet points with **bold headers** followed by description.
+Format: • **Header Name** - Specific description with metrics (13 minutes, 38 sources)""",
+    
+    "numbered_steps": """Use numbered list for sequential steps or ranked items.
+Format: 1. **Step Name** - What to do and why""",
+    
+    "short_paragraphs": """Use very short paragraphs (1-2 sentences each) without bullets.
+Create rhythm through line breaks.""",
+    
+    "problem_solution": """Structure as Problem → Insight → Solution for each point.
+Show the pain, then the relief."""
+}
+
+CLOSER_VARIATIONS = {
+    "impressive_part": """Use "The most impressive part?" as transition to key insight.""",
+    
+    "mindset_shift": """Use "The biggest mindset shift:" to share the transformation.""",
+    
+    "bottom_line": """Use "Bottom line:" for a direct, no-nonsense summary.""",
+    
+    "real_talk": """Use "Here's the truth:" for authentic, direct closing."""
+}
+
+CTA_VARIATIONS = {
+    "which_first": """End with "Which of these are you most excited to try first?" """,
+    
+    "what_would": """End with "What [specific task] would you want [tool] to handle?" """,
+    
+    "drop_comment": """End with "Drop a 🔥 if you're trying this" or similar engagement ask.""",
+    
+    "save_this": """End with "Save this for later - you'll need it." """,
+    
+    "hot_take": """End with "Hot take? Let me know if you disagree." """
+}
+
+
 class ContentPipeline:
     def __init__(self, config: Config, url: str = "", blotato_account_id: str = None, style: str = "default"):
         self.cfg = config
@@ -35,6 +95,7 @@ class ContentPipeline:
         # Allow override for multi-client support
         self.blotato_account_id = blotato_account_id or config.blotato_account_id
         self.style = style
+        self.experiment_variation = None  # Track which variation was used
         
         # Initialize Gemini Client
         if config.gemini_api_key and genai:
@@ -437,44 +498,76 @@ The logo will be added separately. Focus only on the infographic content.
                 
         raise TimeoutError("Kie image generation timed out")
 
-    def generate_post_claude(self, content: str) -> str:
-        """Generates a LinkedIn post using Claude with style support."""
+    def _select_variation(self, weights: Dict[str, float] = None) -> Tuple[str, str, str, str, str]:
+        """Select variations for this post, weighted by past performance."""
+        weights = weights or {}
+        
+        def weighted_choice(options: dict, category: str) -> Tuple[str, str]:
+            """Choose from options, weighted by performance."""
+            items = list(options.items())
+            option_weights = []
+            for name, _ in items:
+                key = f"{category}:{name}"
+                option_weights.append(weights.get(key, 1.0))
+            
+            # Normalize and select
+            total = sum(option_weights)
+            r = random.random() * total
+            cumulative = 0
+            for (name, value), w in zip(items, option_weights):
+                cumulative += w
+                if r <= cumulative:
+                    return name, value
+            return items[-1]  # Fallback
+        
+        hook_name, hook_prompt = weighted_choice(HOOK_VARIATIONS, "hook")
+        struct_name, struct_prompt = weighted_choice(STRUCTURE_VARIATIONS, "structure")
+        closer_name, closer_prompt = weighted_choice(CLOSER_VARIATIONS, "closer")
+        cta_name, cta_prompt = weighted_choice(CTA_VARIATIONS, "cta")
+        
+        variation_id = f"{hook_name}|{struct_name}|{closer_name}|{cta_name}"
+        
+        return variation_id, hook_prompt, struct_prompt, closer_prompt, cta_prompt
+
+    def generate_post_claude(self, content: str, weights: Dict[str, float] = None) -> str:
+        """Generates a LinkedIn post using Claude with experimental variations."""
         if not self.anthropic_client:
             raise RuntimeError("Anthropic API key not configured or SDK missing")
         
-        # Drew's proven LinkedIn style based on top-performing posts
-        drew_style = """
-Write a LinkedIn post in this EXACT style and structure:
+        # Select variations for this experiment
+        variation_id, hook_prompt, struct_prompt, closer_prompt, cta_prompt = self._select_variation(weights)
+        self.experiment_variation = variation_id
+        logger.info(f"Using variation: {variation_id}")
+        
+        # Build dynamic prompt with selected variations
+        experimental_prompt = f"""
+Write a LinkedIn post in this style and structure:
 
 **HOOK (First 1-2 lines):**
-- Start with a bold claim OR personal test with specific timeframe
-- Include specific numbers (hours saved, weeks tested, % improvement)
-- Examples: "Just tested X for 8 weeks straight." or "Most people are only using 5% of this tool's potential."
+{hook_prompt}
+- Include specific numbers when possible (hours, weeks, percentages)
 
 **TRANSITION (Line 3-4):**
 - Use "Here's what blew my mind:" or "Here's the game-changer:" or "The results?"
 - One sentence explaining WHY this matters
 
-**MAIN VALUE - BULLET LIST:**
-- Use bullet points with **bold headers** followed by description
-- Format: • **Header Name** - Specific description with numbers/metrics
-- Include 5-8 specific use cases or tips
-- Add specific metrics: times (13 minutes), quantities (38 sources), percentages
-- Make each bullet actionable and concrete
+**MAIN VALUE SECTION:**
+{struct_prompt}
+- Include 5-8 specific use cases, tips, or insights
+- Add specific metrics where possible (times, quantities, percentages)
+- Make each point actionable and concrete
 
 **CLOSER:**
-- Use "The most impressive part?" or "The biggest mindset shift:" as transition
+{closer_prompt}
 - 1-2 sentences on the key insight or transformation
-- Emphasize time savings or efficiency gains
 
 **CTA (Final line):**
-- End with an engagement question
-- Examples: "Which of these are you most excited to try?" or "What task would you want AI to handle first?"
+{cta_prompt}
 
 **CRITICAL RULES:**
 - NO hashtags anywhere
-- NO emojis
-- Use **bold** for bullet headers only
+- NO emojis  
+- Use **bold** for headers only
 - Keep paragraphs short (1-2 sentences max)
 - Be specific with numbers - never vague
 - First person perspective ("I tested", "changed for me")
@@ -482,22 +575,15 @@ Write a LinkedIn post in this EXACT style and structure:
 - Focus on practical, actionable value
 """
         
-        style_prompts = {
-            "default": drew_style,
-            "thought_leader": drew_style,
-            "how_to": drew_style,
-            "curiosity": drew_style,
-            "story": drew_style,
-            "soulprint": drew_style + """
+        # Add SoulPrint rules if needed
+        if self.style == "soulprint":
+            experimental_prompt += """
 
 ADDITIONAL FOR SOULPRINT:
 Replace ANY mention of AI tools (ChatGPT, GPT, Claude, Grok, Gemini, Copilot, Perplexity, OpenAI, AI assistant, LLM, etc.) with "SoulPrint" instead."""
-        }
         
-        selected_prompt = style_prompts.get(self.style, style_prompts["default"])
         source_label = "tweet" if self.platform == "twitter" else "transcript"
-        
-        prompt = f"{selected_prompt}\n\nCONTENT ({source_label}):\n{content}\n\nWrite the post now. Return ONLY the post text, nothing else."
+        prompt = f"{experimental_prompt}\n\nCONTENT ({source_label}):\n{content}\n\nWrite the post now. Return ONLY the post text, nothing else."
         
         try:
             msg = self.anthropic_client.messages.create(
@@ -512,7 +598,6 @@ Replace ANY mention of AI tools (ChatGPT, GPT, Claude, Grok, Gemini, Copilot, Pe
                 post_text = str(msg.content)
             
             # Safety: remove any hashtags that slip through
-            import re
             post_text = re.sub(r'\n#\w+.*$', '', post_text, flags=re.MULTILINE)
             post_text = re.sub(r'#\w+', '', post_text)
             
@@ -639,6 +724,9 @@ Replace ANY mention of AI tools (ChatGPT, GPT, Claude, Grok, Gemini, Copilot, Pe
             
         post_text = self.generate_post_claude(content)
         
+        # Generate unique post ID for experiment tracking
+        post_id = hashlib.md5(f"{self.url}:{time.time()}".encode()).hexdigest()[:12]
+        
         result = {
             "platform": self.platform,
             "url": self.url,
@@ -646,7 +734,9 @@ Replace ANY mention of AI tools (ChatGPT, GPT, Claude, Grok, Gemini, Copilot, Pe
             "summary": summary, 
             "post_text": post_text,
             "brief": brief,
-            "blotato_account_id": self.blotato_account_id
+            "blotato_account_id": self.blotato_account_id,
+            "post_id": post_id,
+            "variation": self.experiment_variation
         }
 
         if not skip_post and final_img:
