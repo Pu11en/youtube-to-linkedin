@@ -221,15 +221,19 @@ class ContentPipeline:
         # Method 1: Try YouTubeTranscriptApi with proxy
         proxy_config = None
         if self.cfg.proxy_url:
+            logger.info(f"Using proxy: {self.cfg.proxy_url[:30]}...") # Log first 30 chars only for security
             proxy_config = GenericProxyConfig(
                 http_url=self.cfg.proxy_url,
                 https_url=self.cfg.proxy_url,
             )
+        else:
+            logger.warning("No PROXY_URL configured - YouTube will likely block requests")
         
         try:
             ytt_api = YouTubeTranscriptApi(proxy_config=proxy_config)
             fetched_transcript = ytt_api.fetch(video_id, languages=['en', 'en-US', 'en-GB'])
             formatter = TextFormatter()
+            logger.info("Successfully fetched transcript via YouTubeTranscriptApi")
             return formatter.format_transcript(fetched_transcript)
         except Exception as e:
             logger.warning(f"YouTubeTranscriptApi failed: {e}")
