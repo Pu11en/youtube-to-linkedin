@@ -540,7 +540,7 @@ def telegram_webhook():
             status_msg = f"📊 Today: {posts_today}/5 posts" if is_weekday else "📊 Weekend - no posting"
             send_telegram(chat_id, f"📭 Queue for <b>{current}</b> is empty!\n\n{status_msg}", cfg)
         else:
-            # Post times in Chicago: 1am, 5:45am, 10:30am, 3:15pm, 10pm
+            # Post times in Chicago: 1am, 6am, 11am, 4pm, 10pm
             # Using zoneinfo for accurate Chicago time
             try:
                 from zoneinfo import ZoneInfo
@@ -548,7 +548,7 @@ def telegram_webhook():
                 from backports.zoneinfo import ZoneInfo
             
             chicago_tz = ZoneInfo("America/Chicago")
-            post_hours = [(1, 0), (5, 45), (10, 30), (15, 15), (22, 0)]  # (hour, minute)
+            post_hours = [(1, 0), (6, 0), (11, 0), (16, 0), (22, 0)]  # (hour, minute)
             now_chicago = datetime.now(chicago_tz)
             
             def get_next_post_times(count):
@@ -840,7 +840,10 @@ def telegram_webhook():
 
 @app.route('/api/auto_process_all', methods=['POST', 'GET'])
 def auto_process_all():
-    """Process ONE URL from queue. Enforces 5 posts/day limit on weekdays only (Chicago time)."""
+    """Process ONE URL from queue. Enforces 5 posts/day limit on weekdays only (Chicago time).
+    
+    Cron runs hourly. Posts only at these Chicago hours: 1, 6, 11, 16 (4pm), 22 (10pm).
+    """
     cfg = Config()
     
     # Check daily limit and weekday
@@ -848,6 +851,27 @@ def auto_process_all():
     
     if not tracker.is_weekday():
         return jsonify({"status": "skipped", "reason": "weekend", "message": "No posting on weekends"})
+    
+    # Check if current hour is a posting slot (Chicago time)
+    try:
+        from zoneinfo import ZoneInfo
+    except ImportError:
+        from backports.zoneinfo import ZoneInfo
+    
+    chicago_tz = ZoneInfo("America/Chicago")
+    now_chicago = datetime.now(chicago_tz)
+    current_hour = now_chicago.hour
+    
+    # Posting hours in Chicago: 1am, 6am, 11am, 4pm (16), 10pm (22)
+    posting_hours = [1, 6, 11, 16, 22]
+    
+    if current_hour not in posting_hours:
+        return jsonify({
+            "status": "skipped", 
+            "reason": "not_posting_hour",
+            "message": f"Current hour ({current_hour}) not in posting schedule",
+            "posting_hours": posting_hours
+        })
     
     if not tracker.can_post_today():
         return jsonify({
