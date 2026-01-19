@@ -668,6 +668,11 @@ Replace ANY mention of AI tools (ChatGPT, GPT, Claude, Grok, Gemini, Copilot, Pe
         if not self.blotato_account_id or not self.blotato_account_id.strip():
             raise RuntimeError("BLOTATO_ACCOUNT_ID is not configured")
 
+        # LinkedIn has 3000 character limit - truncate if needed
+        if len(text) > 2990:
+            text = text[:2987] + "..."
+            logger.warning(f"Post text truncated from {len(text)} to 2990 characters")
+
         post_type = f"scheduled for {scheduled_time}" if scheduled_time else "immediate"
         logger.info(f"Posting to LinkedIn via Blotato ({post_type}, account: {self.blotato_account_id[:8]}...)")
 
