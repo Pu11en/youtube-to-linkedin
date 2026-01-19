@@ -14,11 +14,23 @@
     "crons": [
         {
             "path": "/api/auto_process_all",
-            "schedule": "0 14 * * *"
+            "schedule": "0 7 * * 1-5"
         },
         {
             "path": "/api/auto_process_all",
-            "schedule": "0 20 * * *"
+            "schedule": "45 11 * * 1-5"
+        },
+        {
+            "path": "/api/auto_process_all",
+            "schedule": "30 16 * * 1-5"
+        },
+        {
+            "path": "/api/auto_process_all",
+            "schedule": "15 21 * * 1-5"
+        },
+        {
+            "path": "/api/auto_process_all",
+            "schedule": "0 4 * * 2-6"
         }
     ]
 }

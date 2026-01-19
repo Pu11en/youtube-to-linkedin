@@ -1,6 +1,6 @@
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional, Dict
 from app.config import Config
 
@@ -9,7 +9,82 @@ try:
 except ImportError:
     Redis = None
 
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    from backports.zoneinfo import ZoneInfo
+
 logger = logging.getLogger(__name__)
+
+# Chicago timezone for daily tracking
+CHICAGO_TZ = ZoneInfo("America/Chicago")
+
+
+class DailyPostTracker:
+    """Tracks daily post count to enforce 5 posts per weekday limit."""
+    DAILY_KEY_PREFIX = "daily_posts"
+    MAX_POSTS_PER_DAY = 5
+    
+    def __init__(self, config: Config):
+        if not config.kv_url or not config.kv_token:
+            self.redis = None
+            self._local_counts = {}
+        else:
+            self.redis = Redis(url=config.kv_url, token=config.kv_token)
+    
+    def _get_chicago_date(self) -> str:
+        """Get current date in Chicago timezone as YYYY-MM-DD."""
+        return datetime.now(CHICAGO_TZ).strftime("%Y-%m-%d")
+    
+    def _get_chicago_weekday(self) -> int:
+        """Get current weekday in Chicago timezone (0=Monday, 6=Sunday)."""
+        return datetime.now(CHICAGO_TZ).weekday()
+    
+    def is_weekday(self) -> bool:
+        """Check if today is a weekday (Mon-Fri) in Chicago timezone."""
+        return self._get_chicago_weekday() < 5
+    
+    def _daily_key(self) -> str:
+        """Redis key for today's post count."""
+        return f"{self.DAILY_KEY_PREFIX}:{self._get_chicago_date()}"
+    
+    def get_daily_count(self) -> int:
+        """Get number of posts made today."""
+        if not self.redis:
+            return self._local_counts.get(self._get_chicago_date(), 0)
+        try:
+            count = self.redis.get(self._daily_key())
+            return int(count) if count else 0
+        except Exception as e:
+            logger.error(f"Redis get daily count failed: {e}")
+            return 0
+    
+    def increment_daily_count(self) -> int:
+        """Increment today's post count. Returns new count."""
+        if not self.redis:
+            date_key = self._get_chicago_date()
+            self._local_counts[date_key] = self._local_counts.get(date_key, 0) + 1
+            return self._local_counts[date_key]
+        try:
+            new_count = self.redis.incr(self._daily_key())
+            # Set expiry to 48 hours (auto-cleanup)
+            self.redis.expire(self._daily_key(), 48 * 60 * 60)
+            return new_count
+        except Exception as e:
+            logger.error(f"Redis increment daily count failed: {e}")
+            return 0
+    
+    def can_post_today(self) -> bool:
+        """Check if we can still post today (under limit and is weekday)."""
+        if not self.is_weekday():
+            return False
+        return self.get_daily_count() < self.MAX_POSTS_PER_DAY
+    
+    def get_remaining_today(self) -> int:
+        """Get remaining posts allowed today."""
+        if not self.is_weekday():
+            return 0
+        return max(0, self.MAX_POSTS_PER_DAY - self.get_daily_count())
 
 
 class ClientManager:

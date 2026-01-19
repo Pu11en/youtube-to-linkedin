@@ -15,7 +15,7 @@ from flask import Flask, render_template, request, jsonify
 
 # Import from our new app structure
 from app.config import Config
-from app.queue_manager import SimpleQueue, ClientManager, ExperimentTracker
+from app.queue_manager import SimpleQueue, ClientManager, ExperimentTracker, DailyPostTracker
 from app.services import ContentPipeline
 
 # Configuration
@@ -531,32 +531,62 @@ def telegram_webhook():
     if text == '/queue':
         current = active_client.get(chat_id, 'drew')
         urls = q.get_urls(current)
+        daily_tracker = DailyPostTracker(cfg)
+        posts_today = daily_tracker.get_daily_count()
+        remaining_today = daily_tracker.get_remaining_today()
+        is_weekday = daily_tracker.is_weekday()
+        
         if not urls:
-            send_telegram(chat_id, f"📭 Queue for <b>{current}</b> is empty!", cfg)
+            status_msg = f"📊 Today: {posts_today}/5 posts" if is_weekday else "📊 Weekend - no posting"
+            send_telegram(chat_id, f"📭 Queue for <b>{current}</b> is empty!\n\n{status_msg}", cfg)
         else:
-            # Post times (UTC): 9am, 5pm
-            post_hours = [9, 17]
-            now = datetime.utcnow()
+            # Post times in Chicago: 1am, 5:45am, 10:30am, 3:15pm, 10pm
+            # Using zoneinfo for accurate Chicago time
+            try:
+                from zoneinfo import ZoneInfo
+            except ImportError:
+                from backports.zoneinfo import ZoneInfo
             
-            # Find next post times
+            chicago_tz = ZoneInfo("America/Chicago")
+            post_hours = [(1, 0), (5, 45), (10, 30), (15, 15), (22, 0)]  # (hour, minute)
+            now_chicago = datetime.now(chicago_tz)
+            
             def get_next_post_times(count):
+                """Get next post times, skipping weekends."""
                 times = []
-                check_time = now
+                check_date = now_chicago.date()
+                slots_used_today = posts_today  # Already posted today
+                
                 while len(times) < count:
-                    for hour in post_hours:
-                        candidate = check_time.replace(hour=hour, minute=0, second=0, microsecond=0)
-                        if candidate > now and len(times) < count:
+                    # Check if this day is a weekday (0=Mon, 4=Fri)
+                    if check_date.weekday() < 5:  # Weekday
+                        for hour, minute in post_hours:
+                            if len(times) >= count:
+                                break
+                            candidate = datetime(check_date.year, check_date.month, check_date.day, 
+                                                hour, minute, tzinfo=chicago_tz)
+                            # If today, skip already-used slots and past times
+                            if check_date == now_chicago.date():
+                                if candidate <= now_chicago:
+                                    continue
+                                # Account for posts already made today
+                                slot_index = post_hours.index((hour, minute))
+                                if slot_index < slots_used_today:
+                                    continue
                             times.append(candidate)
-                    check_time += timedelta(days=1)
-                    check_time = check_time.replace(hour=0)
+                    check_date += timedelta(days=1)
                 return times
             
             next_times = get_next_post_times(len(urls))
             
-            msg = f"📝 <b>Queue for {current}:</b>\n\n"
+            status_msg = f"📊 Today: {posts_today}/5 posts ({remaining_today} left)" if is_weekday else "📊 Weekend - resumes Monday"
+            msg = f"📝 <b>Queue for {current}:</b>\n{status_msg}\n\n"
             for i, url in enumerate(urls):
                 short_url = url[:40] + "..." if len(url) > 40 else url
-                est_time = next_times[i].strftime("%b %d, %I%p UTC") if i < len(next_times) else "TBD"
+                if i < len(next_times):
+                    est_time = next_times[i].strftime("%b %d, %I:%M%p CT")
+                else:
+                    est_time = "TBD"
                 msg += f"{i+1}. {short_url}\n   🕐 {est_time}\n\n"
             msg += f"💡 /remove &lt;number&gt; to remove\n💡 /go to post now"
             send_telegram(chat_id, msg, cfg)
@@ -810,81 +840,101 @@ def telegram_webhook():
 
 @app.route('/api/auto_process_all', methods=['POST', 'GET'])
 def auto_process_all():
-    """Process one URL from each client's queue."""
-    # Allow Vercel cron (no auth) or manual calls with auth
-    auth = request.headers.get('Authorization')
+    """Process ONE URL from queue. Enforces 5 posts/day limit on weekdays only (Chicago time)."""
     cfg = Config()
-    # Skip auth check for Vercel cron (comes from vercel's servers)
-    # You can add CRON_SECRET later if needed
+    
+    # Check daily limit and weekday
+    tracker = DailyPostTracker(cfg)
+    
+    if not tracker.is_weekday():
+        return jsonify({"status": "skipped", "reason": "weekend", "message": "No posting on weekends"})
+    
+    if not tracker.can_post_today():
+        return jsonify({
+            "status": "skipped", 
+            "reason": "daily_limit", 
+            "message": f"Daily limit reached ({tracker.MAX_POSTS_PER_DAY} posts)",
+            "count_today": tracker.get_daily_count()
+        })
     
     clients = ClientManager(cfg)
     q = SimpleQueue(cfg)
-    results = []
     
-    # Process default queue (your original account)
+    # Get all client names and find FIRST queue with items (round-robin approach)
     all_client_names = ['drew'] + list(clients.get_all().keys())
     
+    # Find first client with a URL in queue
+    selected_client = None
+    url = None
     for client_name in all_client_names:
-        url = q.pop_next(client_name)
-        if not url:
-            continue
-        
-        try:
-            # Get settings for this client
-            client_info = clients.get_client(client_name) or {}
-            preview_enabled = client_info.get('preview_mode', False)
-            blotato_account_id = client_info.get('blotato_account_id', cfg.blotato_account_id)
-            style = client_info.get('style', 'soulprint')
-            
-            pipeline = ContentPipeline(cfg, url, blotato_account_id=blotato_account_id, style=style)
-            result = pipeline.run_all(skip_post=preview_enabled)
-            
-            if preview_enabled:
-                # Store preview and notify admin
-                url_hash = hashlib.md5(url.encode()).hexdigest()[:10]
-                preview_key = f"preview:{client_name}:{url_hash}"
-                if q.redis:
-                    q.redis.setex(preview_key, 3600 * 24, json.dumps(result))
-                    
-                    if cfg.telegram_bot_token and cfg.telegram_admin_chat_id:
-                        kb = {
-                            "inline_keyboard": [[
-                                {"text": "✅ Post Now", "callback_data": f"post:{client_name}:{url_hash}"},
-                                {"text": "❌ Cancel", "callback_data": f"cancel:{client_name}:{url_hash}"}
-                            ]]
-                        }
-                        preview_text = f"📝 <b>AUTO-PREVIEW for {client_name}</b>\n\n{result.get('post_text', '')[:3500]}"
-                        send_telegram(cfg.telegram_admin_chat_id, preview_text, cfg, reply_markup=kb, photo_url=result.get('image_url'))
-                    
-                results.append({"client": client_name, "url": url, "status": "previewed"})
-            else:
-                q.mark_done(url, client_name)
-                results.append({"client": client_name, "url": url, "status": "posted"})
-                
-                # Send Telegram notification
-                if cfg.telegram_bot_token and cfg.telegram_admin_chat_id:
-                    remaining = len(q.get_urls(client_name))
-                    send_telegram(cfg.telegram_admin_chat_id, 
-                        f"🚀 <b>Auto-posted to LinkedIn!</b>\n\n"
-                        f"Client: {client_name}\n"
-                        f"🔗 {url[:50]}...\n"
-                        f"📝 {remaining} left in queue", cfg)
-        except Exception as e:
-            logger.error(f"Auto process failed for {client_name}: {e}")
-            results.append({"client": client_name, "url": url, "status": "failed", "error": str(e)})
-            
-            # Notify on failure too
-            if cfg.telegram_bot_token and cfg.telegram_admin_chat_id:
-                send_telegram(cfg.telegram_admin_chat_id,
-                    f"❌ <b>Auto-post failed</b>\n\n"
-                    f"Client: {client_name}\n"
-                    f"🔗 {url[:50]}...\n"
-                    f"Error: {str(e)[:100]}", cfg)
+        urls = q.get_urls(client_name)
+        if urls:
+            url = q.pop_next(client_name)
+            selected_client = client_name
+            break
     
-    if not results:
+    if not url:
         return jsonify({"status": "idle", "message": "No URLs in any queue"})
     
-    return jsonify({"status": "processed", "results": results})
+    try:
+        # Get settings for this client
+        client_info = clients.get_client(selected_client) or {}
+        preview_enabled = client_info.get('preview_mode', False)
+        blotato_account_id = client_info.get('blotato_account_id', cfg.blotato_account_id)
+        style = client_info.get('style', 'soulprint')
+        
+        pipeline = ContentPipeline(cfg, url, blotato_account_id=blotato_account_id, style=style)
+        result = pipeline.run_all(skip_post=preview_enabled)
+        
+        if preview_enabled:
+            # Store preview and notify admin
+            url_hash = hashlib.md5(url.encode()).hexdigest()[:10]
+            preview_key = f"preview:{selected_client}:{url_hash}"
+            if q.redis:
+                q.redis.setex(preview_key, 3600 * 24, json.dumps(result))
+                
+                if cfg.telegram_bot_token and cfg.telegram_admin_chat_id:
+                    kb = {
+                        "inline_keyboard": [[
+                            {"text": "✅ Post Now", "callback_data": f"post:{selected_client}:{url_hash}"},
+                            {"text": "❌ Cancel", "callback_data": f"cancel:{selected_client}:{url_hash}"}
+                        ]]
+                    }
+                    preview_text = f"📝 <b>AUTO-PREVIEW for {selected_client}</b>\n\n{result.get('post_text', '')[:3500]}"
+                    send_telegram(cfg.telegram_admin_chat_id, preview_text, cfg, reply_markup=kb, photo_url=result.get('image_url'))
+            
+            # Increment daily count even for previews
+            tracker.increment_daily_count()
+            return jsonify({"client": selected_client, "url": url, "status": "previewed", "posts_today": tracker.get_daily_count()})
+        else:
+            q.mark_done(url, selected_client)
+            tracker.increment_daily_count()
+            
+            # Send Telegram notification
+            if cfg.telegram_bot_token and cfg.telegram_admin_chat_id:
+                remaining = len(q.get_urls(selected_client))
+                posts_today = tracker.get_daily_count()
+                remaining_today = tracker.get_remaining_today()
+                send_telegram(cfg.telegram_admin_chat_id, 
+                    f"🚀 <b>Auto-posted to LinkedIn!</b>\n\n"
+                    f"Client: {selected_client}\n"
+                    f"🔗 {url[:50]}...\n"
+                    f"📝 {remaining} left in queue\n"
+                    f"📊 {posts_today}/5 posts today ({remaining_today} remaining)", cfg)
+            
+            return jsonify({"client": selected_client, "url": url, "status": "posted", "posts_today": tracker.get_daily_count()})
+    except Exception as e:
+        logger.error(f"Auto process failed for {selected_client}: {e}")
+        
+        # Notify on failure
+        if cfg.telegram_bot_token and cfg.telegram_admin_chat_id:
+            send_telegram(cfg.telegram_admin_chat_id,
+                f"❌ <b>Auto-post failed</b>\n\n"
+                f"Client: {selected_client}\n"
+                f"🔗 {url[:50]}...\n"
+                f"Error: {str(e)[:100]}", cfg)
+        
+        return jsonify({"client": selected_client, "url": url, "status": "failed", "error": str(e)}), 500
 
 if __name__ == '__main__':
     app.run(debug=True, port=4000)
