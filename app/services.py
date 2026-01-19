@@ -653,8 +653,14 @@ Replace ANY mention of AI tools (ChatGPT, GPT, Claude, Grok, Gemini, Copilot, Pe
             logger.error(f"Cloudinary upload failed: {e}")
             return image_url # Return original on failure
 
-    def post_blotato(self, text: str, image_url: str):
-        """Posts to LinkedIn via Blotato API."""
+    def post_blotato(self, text: str, image_url: str, scheduled_time: str = None):
+        """Posts to LinkedIn via Blotato API.
+        
+        Args:
+            text: Post text content
+            image_url: URL of the image to attach
+            scheduled_time: Optional ISO 8601 timestamp for scheduled posting (e.g., '2026-01-20T16:00:00Z')
+        """
         # Validate required credentials
         if not self.cfg.blotato_api_key or not self.cfg.blotato_api_key.strip():
             raise RuntimeError("BLOTATO_API_KEY is not configured")
@@ -662,7 +668,8 @@ Replace ANY mention of AI tools (ChatGPT, GPT, Claude, Grok, Gemini, Copilot, Pe
         if not self.blotato_account_id or not self.blotato_account_id.strip():
             raise RuntimeError("BLOTATO_ACCOUNT_ID is not configured")
 
-        logger.info(f"Posting to LinkedIn via Blotato (account: {self.blotato_account_id[:8]}...)")
+        post_type = f"scheduled for {scheduled_time}" if scheduled_time else "immediate"
+        logger.info(f"Posting to LinkedIn via Blotato ({post_type}, account: {self.blotato_account_id[:8]}...)")
 
         headers = {
             "Content-Type": "application/json",
@@ -682,6 +689,10 @@ Replace ANY mention of AI tools (ChatGPT, GPT, Claude, Grok, Gemini, Copilot, Pe
                 }
             }
         }
+        
+        # Add scheduled time if provided
+        if scheduled_time:
+            payload["scheduledTime"] = scheduled_time
         
         try:
             r = requests.post(

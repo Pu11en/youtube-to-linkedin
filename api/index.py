@@ -840,19 +840,14 @@ def telegram_webhook():
 
 @app.route('/api/auto_process_all', methods=['POST', 'GET'])
 def auto_process_all():
-    """Process ONE URL from queue. Enforces 5 posts/day limit on weekdays only (Chicago time).
+    """Process up to 5 URLs from queue and schedule them throughout the day.
     
-    Cron runs hourly. Posts only at these Chicago hours: 1, 6, 11, 16 (4pm), 22 (10pm).
+    Runs once daily at 1 AM Chicago. Schedules posts for 1am, 6am, 11am, 4pm, 10pm.
+    Uses Blotato's scheduledTime feature to spread posts throughout the day.
     """
     cfg = Config()
     
-    # Check daily limit and weekday
-    tracker = DailyPostTracker(cfg)
-    
-    if not tracker.is_weekday():
-        return jsonify({"status": "skipped", "reason": "weekend", "message": "No posting on weekends"})
-    
-    # Check if current hour is a posting slot (Chicago time)
+    # Chicago timezone setup
     try:
         from zoneinfo import ZoneInfo
     except ImportError:
@@ -860,105 +855,106 @@ def auto_process_all():
     
     chicago_tz = ZoneInfo("America/Chicago")
     now_chicago = datetime.now(chicago_tz)
-    current_hour = now_chicago.hour
+    
+    # Check if weekday (Mon-Fri)
+    if now_chicago.weekday() >= 5:
+        return jsonify({"status": "skipped", "reason": "weekend", "message": "No posting on weekends"})
     
     # Posting hours in Chicago: 1am, 6am, 11am, 4pm (16), 10pm (22)
     posting_hours = [1, 6, 11, 16, 22]
     
-    if current_hour not in posting_hours:
-        return jsonify({
-            "status": "skipped", 
-            "reason": "not_posting_hour",
-            "message": f"Current hour ({current_hour}) not in posting schedule",
-            "posting_hours": posting_hours
-        })
-    
-    if not tracker.can_post_today():
-        return jsonify({
-            "status": "skipped", 
-            "reason": "daily_limit", 
-            "message": f"Daily limit reached ({tracker.MAX_POSTS_PER_DAY} posts)",
-            "count_today": tracker.get_daily_count()
-        })
-    
     clients = ClientManager(cfg)
     q = SimpleQueue(cfg)
     
-    # Get all client names and find FIRST queue with items (round-robin approach)
+    # Get all client names
     all_client_names = ['drew'] + list(clients.get_all().keys())
     
-    # Find first client with a URL in queue
-    selected_client = None
-    url = None
+    # Collect up to 5 URLs to process
+    items_to_process = []
     for client_name in all_client_names:
-        urls = q.get_urls(client_name)
-        if urls:
+        while len(items_to_process) < 5:
             url = q.pop_next(client_name)
-            selected_client = client_name
+            if not url:
+                break
+            client_info = clients.get_client(client_name) or {}
+            items_to_process.append({
+                "client": client_name,
+                "url": url,
+                "blotato_account_id": client_info.get('blotato_account_id', cfg.blotato_account_id),
+                "style": client_info.get('style', 'soulprint'),
+                "preview_mode": client_info.get('preview_mode', False)
+            })
+        if len(items_to_process) >= 5:
             break
     
-    if not url:
+    if not items_to_process:
         return jsonify({"status": "idle", "message": "No URLs in any queue"})
     
-    try:
-        # Get settings for this client
-        client_info = clients.get_client(selected_client) or {}
-        preview_enabled = client_info.get('preview_mode', False)
-        blotato_account_id = client_info.get('blotato_account_id', cfg.blotato_account_id)
-        style = client_info.get('style', 'soulprint')
+    results = []
+    
+    for i, item in enumerate(items_to_process):
+        url = item["url"]
+        client_name = item["client"]
         
-        pipeline = ContentPipeline(cfg, url, blotato_account_id=blotato_account_id, style=style)
-        result = pipeline.run_all(skip_post=preview_enabled)
-        
-        if preview_enabled:
-            # Store preview and notify admin
-            url_hash = hashlib.md5(url.encode()).hexdigest()[:10]
-            preview_key = f"preview:{selected_client}:{url_hash}"
-            if q.redis:
-                q.redis.setex(preview_key, 3600 * 24, json.dumps(result))
+        try:
+            # Calculate scheduled time for this post
+            post_hour = posting_hours[i] if i < len(posting_hours) else posting_hours[-1]
+            
+            # If the posting hour has already passed today, the post will go out immediately
+            # Otherwise, schedule it for today at that hour
+            scheduled_dt = now_chicago.replace(hour=post_hour, minute=0, second=0, microsecond=0)
+            
+            # Convert to UTC ISO 8601 format for Blotato
+            scheduled_utc = scheduled_dt.astimezone(ZoneInfo("UTC"))
+            scheduled_time_str = scheduled_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+            
+            # If time already passed, post immediately (no scheduled_time)
+            if scheduled_dt <= now_chicago:
+                scheduled_time_str = None
+                schedule_display = "now"
+            else:
+                schedule_display = scheduled_dt.strftime("%I:%M %p CT")
+            
+            pipeline = ContentPipeline(cfg, url, blotato_account_id=item["blotato_account_id"], style=item["style"])
+            
+            if item["preview_mode"]:
+                result = pipeline.run_all(skip_post=True)
+                url_hash = hashlib.md5(url.encode()).hexdigest()[:10]
+                preview_key = f"preview:{client_name}:{url_hash}"
+                if q.redis:
+                    q.redis.setex(preview_key, 3600 * 24, json.dumps(result))
+                results.append({"client": client_name, "url": url, "status": "previewed", "scheduled": schedule_display})
+            else:
+                result = pipeline.run_all(skip_post=True)  # Generate content but don't post yet
+                # Post with scheduled time
+                pipeline.post_blotato(result["post_text"], result["image_url"], scheduled_time=scheduled_time_str)
+                q.mark_done(url, client_name)
+                results.append({"client": client_name, "url": url, "status": "scheduled", "scheduled": schedule_display})
                 
-                if cfg.telegram_bot_token and cfg.telegram_admin_chat_id:
-                    kb = {
-                        "inline_keyboard": [[
-                            {"text": "✅ Post Now", "callback_data": f"post:{selected_client}:{url_hash}"},
-                            {"text": "❌ Cancel", "callback_data": f"cancel:{selected_client}:{url_hash}"}
-                        ]]
-                    }
-                    preview_text = f"📝 <b>AUTO-PREVIEW for {selected_client}</b>\n\n{result.get('post_text', '')[:3500]}"
-                    send_telegram(cfg.telegram_admin_chat_id, preview_text, cfg, reply_markup=kb, photo_url=result.get('image_url'))
-            
-            # Increment daily count even for previews
-            tracker.increment_daily_count()
-            return jsonify({"client": selected_client, "url": url, "status": "previewed", "posts_today": tracker.get_daily_count()})
-        else:
-            q.mark_done(url, selected_client)
-            tracker.increment_daily_count()
-            
-            # Send Telegram notification
-            if cfg.telegram_bot_token and cfg.telegram_admin_chat_id:
-                remaining = len(q.get_urls(selected_client))
-                posts_today = tracker.get_daily_count()
-                remaining_today = tracker.get_remaining_today()
-                send_telegram(cfg.telegram_admin_chat_id, 
-                    f"🚀 <b>Auto-posted to LinkedIn!</b>\n\n"
-                    f"Client: {selected_client}\n"
-                    f"🔗 {url[:50]}...\n"
-                    f"📝 {remaining} left in queue\n"
-                    f"📊 {posts_today}/5 posts today ({remaining_today} remaining)", cfg)
-            
-            return jsonify({"client": selected_client, "url": url, "status": "posted", "posts_today": tracker.get_daily_count()})
-    except Exception as e:
-        logger.error(f"Auto process failed for {selected_client}: {e}")
+        except Exception as e:
+            logger.error(f"Auto process failed for {client_name}: {e}")
+            results.append({"client": client_name, "url": url, "status": "failed", "error": str(e)})
+    
+    # Send summary Telegram notification
+    if cfg.telegram_bot_token and cfg.telegram_admin_chat_id:
+        successful = [r for r in results if r["status"] in ["scheduled", "previewed"]]
+        failed = [r for r in results if r["status"] == "failed"]
         
-        # Notify on failure
-        if cfg.telegram_bot_token and cfg.telegram_admin_chat_id:
-            send_telegram(cfg.telegram_admin_chat_id,
-                f"❌ <b>Auto-post failed</b>\n\n"
-                f"Client: {selected_client}\n"
-                f"🔗 {url[:50]}...\n"
-                f"Error: {str(e)[:100]}", cfg)
+        msg = f"🚀 <b>Daily batch processed!</b>\n\n"
+        msg += f"✅ Scheduled: {len(successful)}\n"
+        msg += f"❌ Failed: {len(failed)}\n\n"
         
-        return jsonify({"client": selected_client, "url": url, "status": "failed", "error": str(e)}), 500
+        for r in successful:
+            msg += f"• {r['client']}: {r['scheduled']}\n"
+        
+        if failed:
+            msg += f"\n<b>Failures:</b>\n"
+            for r in failed:
+                msg += f"• {r['client']}: {r.get('error', 'Unknown')[:50]}\n"
+        
+        send_telegram(cfg.telegram_admin_chat_id, msg, cfg)
+    
+    return jsonify({"status": "processed", "results": results})
 
 if __name__ == '__main__':
     app.run(debug=True, port=4000)
