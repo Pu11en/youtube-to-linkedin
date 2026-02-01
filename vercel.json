@@ -13,6 +13,10 @@
     ],
     "crons": [
         {
+            "path": "/api/auto_discover",
+            "schedule": "0 6 * * 1-5"
+        },
+        {
             "path": "/api/auto_process_all",
             "schedule": "0 7 * * 1-5"
         }

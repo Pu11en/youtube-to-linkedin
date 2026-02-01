@@ -956,5 +956,182 @@ def auto_process_all():
     
     return jsonify({"status": "processed", "results": results})
 
+# ============================================
+# YouTube Discovery Endpoints
+# ============================================
+
+@app.route('/api/discover/channel', methods=['POST'])
+def discover_channel():
+    """Discover latest videos from a YouTube channel.
+    
+    Request JSON:
+        - channel_id: YouTube channel ID (UC...)
+        - max_results: Optional, default 5
+    """
+    from app.youtube_discovery import discover_channel_videos
+    
+    try:
+        data = request.json or {}
+        channel_id = data.get('channel_id')
+        max_results = data.get('max_results', 5)
+        
+        if not channel_id:
+            return jsonify({'status': 'error', 'message': 'channel_id is required'}), 400
+        
+        videos = discover_channel_videos(channel_id, max_results)
+        return jsonify({
+            'status': 'success',
+            'videos': videos,
+            'count': len(videos)
+        })
+    except Exception as e:
+        logger.error(f"Channel discovery failed: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/api/discover/playlist', methods=['POST'])
+def discover_playlist():
+    """Discover videos from a YouTube playlist.
+    
+    Request JSON:
+        - playlist_id: YouTube playlist ID
+        - max_results: Optional, default 10
+    """
+    from app.youtube_discovery import discover_playlist_videos
+    
+    try:
+        data = request.json or {}
+        playlist_id = data.get('playlist_id')
+        max_results = data.get('max_results', 10)
+        
+        if not playlist_id:
+            return jsonify({'status': 'error', 'message': 'playlist_id is required'}), 400
+        
+        videos = discover_playlist_videos(playlist_id, max_results)
+        return jsonify({
+            'status': 'success',
+            'videos': videos,
+            'count': len(videos)
+        })
+    except Exception as e:
+        logger.error(f"Playlist discovery failed: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/api/discover/search', methods=['POST'])
+def search_youtube():
+    """Search YouTube for videos.
+    
+    Request JSON:
+        - query: Search query
+        - max_results: Optional, default 5
+    """
+    from app.youtube_discovery import search_videos
+    
+    try:
+        data = request.json or {}
+        query = data.get('query')
+        max_results = data.get('max_results', 5)
+        
+        if not query:
+            return jsonify({'status': 'error', 'message': 'query is required'}), 400
+        
+        videos = search_videos(query, max_results)
+        return jsonify({
+            'status': 'success',
+            'videos': videos,
+            'count': len(videos)
+        })
+    except Exception as e:
+        logger.error(f"Search failed: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/api/auto_discover', methods=['POST', 'GET'])
+def auto_discover():
+    """Auto-discover new videos from watched channels and add to queue.
+    
+    Requires:
+        - YOUTUBE_API_KEY
+        - WATCHED_CHANNELS (comma-separated channel IDs)
+        
+    Authorization: Bearer CRON_SECRET
+    """
+    from app.youtube_discovery import discover_channel_videos, get_watched_channels
+    
+    cfg = Config()
+    
+    # Verify authorization (skip for GET during development)
+    if request.method == 'POST':
+        auth = request.headers.get('Authorization')
+        if cfg.cron_secret and auth != f"Bearer {cfg.cron_secret}":
+            return jsonify({"error": "unauthorized"}), 401
+    
+    try:
+        watched_channels = get_watched_channels()
+        if not watched_channels:
+            return jsonify({
+                'status': 'skipped',
+                'message': 'No WATCHED_CHANNELS configured'
+            })
+        
+        q = SimpleQueue(cfg)
+        clients = ClientManager(cfg)
+        
+        # Get existing URLs from all queues to avoid duplicates
+        existing_urls = set()
+        all_client_names = ['drew'] + list(clients.get_all().keys())
+        for client_name in all_client_names:
+            for url in q.get_urls(client_name):
+                existing_urls.add(url)
+            for item in q.get_history(client_name):
+                existing_urls.add(item.get('url', ''))
+        
+        # Discover new videos from each channel
+        new_videos = []
+        for channel_id in watched_channels:
+            videos = discover_channel_videos(channel_id, max_results=3)
+            for video in videos:
+                if video.get('url') and video['url'] not in existing_urls:
+                    new_videos.append(video)
+        
+        # Add new videos to drew's queue (default client)
+        added = 0
+        for video in new_videos[:5]:  # Max 5 per run
+            q.add_url(video['url'], 'drew')
+            added += 1
+            existing_urls.add(video['url'])  # Prevent duplicates within same run
+        
+        # Send Telegram notification if any videos were added
+        if added > 0 and cfg.telegram_bot_token and cfg.telegram_admin_chat_id:
+            msg = f"🔍 <b>Auto-Discovery</b>\n\n"
+            msg += f"Found {len(new_videos)} new video(s)\n"
+            msg += f"Added {added} to queue\n\n"
+            for v in new_videos[:added]:
+                msg += f"• {v.get('title', 'Untitled')[:40]}...\n"
+            send_telegram(cfg.telegram_admin_chat_id, msg, cfg)
+        
+        return jsonify({
+            'status': 'success',
+            'channels_checked': len(watched_channels),
+            'videos_found': len(new_videos),
+            'videos_added': added
+        })
+        
+    except Exception as e:
+        logger.error(f"Auto-discover failed: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/api/health', methods=['GET'])
+def health_check():
+    """Health check endpoint."""
+    return jsonify({
+        'status': 'healthy',
+        'timestamp': datetime.utcnow().isoformat() + 'Z',
+        'version': '2.1.0'
+    })
+
+
 if __name__ == '__main__':
     app.run(debug=True, port=4000)
